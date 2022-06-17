@@ -50,6 +50,9 @@ class PolygonInteractor:
     epsilon = 5  # max pixel distance to count as a vertex hit
     picked = None
 
+    current_selection_set = set()
+    seletion_set = set()
+
     def __init__(self, ax, poly):
         if poly.figure is None:
             raise RuntimeError('You must first add the polygon to a figure '
@@ -77,14 +80,18 @@ class PolygonInteractor:
         self.canvas = canvas
 
     def redraw(self):
-        if PolygonInteractor.picked == self.poly:
-            self.ax.draw_artist(self.line)
+        if self.poly in PolygonInteractor.seletion_set:
             self.poly.set_color(self.my_color)
             self.ax.draw_artist(self.poly)
             #print(f"Redraw {self.poly} {PolygonInteractor.picked == self.poly}")
             #self.ax.draw_artist(self.centerline)
         else:
             self.poly.set_color((0,0,0,0))
+        if self.poly in PolygonInteractor.current_selection_set:
+            self.poly.set_color(self.my_color2)
+            self.ax.draw_artist(self.poly)
+        if self.poly == PolygonInteractor.picked:
+            self.ax.draw_artist(self.line)
 
 
     def on_draw(self, event):
