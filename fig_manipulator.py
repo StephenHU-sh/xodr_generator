@@ -148,6 +148,9 @@ class ZoomOnWheel(MplInteraction):
         """
         super(ZoomOnWheel, self).__init__(figure)
         self._add_connection('scroll_event', self._on_mouse_wheel)
+        self._add_connection('key_press_event', self._on_key_press)
+        self._add_connection('key_release_event', self._on_key_release)
+        self._control_pressed = False
 
         self.scale_factor = scale_factor
 
@@ -197,6 +200,8 @@ class ZoomOnWheel(MplInteraction):
             return new_max, new_min
 
     def _on_mouse_wheel(self, event):
+        if self._control_pressed:
+            return
         if event.step > 0:
             scale_factor = self.scale_factor
         else:
@@ -224,6 +229,14 @@ class ZoomOnWheel(MplInteraction):
 
         if x_axes or y_axes:
             self._draw()
+
+    def _on_key_press(self, event):
+        if event.key == 'control':
+            self._control_pressed = True
+
+    def _on_key_release(self, event):
+        if event.key == 'control':
+            self._control_pressed = False
 
 
 class PanAndZoom(ZoomOnWheel):
@@ -362,6 +375,8 @@ class PanAndZoom(ZoomOnWheel):
         self._draw()
 
     def _on_mouse_press(self, event):
+        if self._control_pressed:
+            return
         if self._pressed_button is not None:
             return  # Discard event if a button is already pressed
 
@@ -377,6 +392,8 @@ class PanAndZoom(ZoomOnWheel):
                 #     self._zoom_area(event)
 
     def _on_mouse_release(self, event):
+        if self._control_pressed:
+            return
         if self._pressed_button == event.button:
             if self._pressed_button == 3:  # pan
                 self._pan(event)
@@ -385,6 +402,8 @@ class PanAndZoom(ZoomOnWheel):
             self._pressed_button = None
 
     def _on_mouse_motion(self, event):
+        if self._control_pressed:
+            return
         if self._pressed_button == 3:  # pan
             self._pan(event)
         # elif self._pressed_button == 1:  # zoom area

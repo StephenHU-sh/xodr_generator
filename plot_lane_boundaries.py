@@ -1,18 +1,30 @@
-import numpy as np
 import matplotlib
+matplotlib.use('TkAgg')
+#matplotlib.use('WXAgg') 
+#matplotlib.use('Qt5Agg') 
+#matplotlib.use('QtAgg') 
+#matplotlib.use('WebAgg') 
+
+import math
+import numpy as np
+import geojson
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.widgets import RectangleSelector
 import polygon_item
 import fig_manipulator
-import geojson
-import math
+import xodr_exporter
+
+import shapely.geometry as sgeom
 
 cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
 region = None
 fig = None
 polys = []
 focused_set = set()
+polys2 = []
+
+lanes = {}
 
 def get_polys_in_region():
   selected = set()
@@ -57,9 +69,11 @@ def toggle_selector(event):
     polygon_item.PolygonInteractor.current_selection_set = set()
     fig.canvas.draw()
     fig.canvas.flush_events()
+  elif event.key == "e":
+    xodr_exporter.export(lanes)
 
 def run(focused_set2=set()):
-  global fig, polys, focused_set
+  global fig, polys, focused_set, lanes
   focused_set = focused_set2
   fig, ax = plt.subplots()
   pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
@@ -111,26 +125,29 @@ def run(focused_set2=set()):
     p.my_color = (c[0], c[1], c[2], 0.3)
     p.my_color2 = (c[0], c[1], c[2], 0.6)
 
+    polys2.append(sgeom.Polygon([(x,y) for x,y,z in f["geometry"]["coordinates"]]))
+
     x_min = min(x_min, min(xx))
     x_max = max(x_max, max(xx))
     y_min = min(y_min, min(yy))
     y_max = max(y_max, max(yy))
     #break
 
-    # if 1:
-    #   # split the lane polygon into two boundaries
-    #   two_side = False
-    #   for idx in range(1, len(xx)-1):
-    #     dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
-    #     d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
-    #     d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
-    #     dot /= math.sqrt(d2a*d2b+0.000000001)
-    #     if abs(dot) < 0.2:
-    #       if lane_id.endswith(",0"):
-    #         plt.plot(xx[:idx], yy[:idx], "-")
-    #       plt.plot(xx[idx+1:-1], yy[idx+1:-1], "-")
-    #       two_side = True
-    #       break
+    if 1:
+      # split the lane polygon into two boundaries
+      two_side = False
+      for idx in range(1, len(xx)-1):
+        dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
+        d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
+        d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
+        dot /= math.sqrt(d2a*d2b+0.000000001)
+        if abs(dot) < 0.2:
+          #if lane_id.endswith(",0"):
+          #  plt.plot(xx[:idx], yy[:idx], "-")
+          #plt.plot(xx[idx+1:-1], yy[idx+1:-1], "-")
+          lanes[lane_id] = ((xx[:idx], yy[:idx]), (xx[idx+1:-1], yy[idx+1:-1]))
+          two_side = True
+          break
     # else:
     #   plt.plot(xx, yy, "-")
     idx = (idx + 1) % len(cycle)
@@ -143,9 +160,14 @@ def run(focused_set2=set()):
       xx = [x for x,y,z in f["geometry"]["coordinates"]]
       yy = [y for x,y,z in f["geometry"]["coordinates"]]
       pts = [[x,y] for x,y,z in f["geometry"]["coordinates"]]
-      r = np.logical_and(region_min_pt <= pts, pts <= region_max_pt)
-      intersected = np.any(np.all(r, axis=1))
-      if not intersected:
+      pts2 = [sgeom.Point(pts[len(pts)//2])]
+      inside = False
+      for poly in polys2:
+        k = [poly.contains(pt) for pt in pts2]
+        if np.all(k):
+          inside = True
+          continue
+      if not inside:
         continue
       plt.plot(xx, yy, "--")
 
@@ -176,20 +198,22 @@ def run(focused_set2=set()):
     toggle_selector.RS = RectangleSelector(ax, region_select_callback,
       drawtype='box', useblit=True, button=[1],  # don't use middle button
       minspanx=5, minspany=5, spancoords='pixels', interactive=False)
-    plt.connect('key_press_event', toggle_selector)
     def update_selected_region(event):
       if toggle_selector.RS.active:
         toggle_selector.RS.update()
     plt.connect('draw_event', update_selected_region)
+  plt.connect('key_press_event', toggle_selector)
 
   mng = plt.get_current_fig_manager()
   #mng.window.showMaximized()
-  mng.window.setGeometry(0,0,w,h)
+  #mng.window.setGeometry(0,0,w,h)
 
   plt.show()
   return focused_set
 
 if __name__ == '__main__':
-  focused_set = run()
+  #focused_set = run()
+  focused_set = {'557024172,0,0,52,2', '557024172,0,0,42,1', '557024172,0,0,42,3', '557024172,0,0,66,2', '557024172,0,0,52,0', '557024172,0,0,42,4', '557024172,0,0,16,1', '557024172,0,0,63,0', '557024172,0,0,16,4', '557024172,0,0,67,0', '557024172,0,0,53,2', '557024172,0,0,52,3', '557024172,0,0,67,5', '557024172,0,0,66,4', '557024172,0,0,67,4', '557024172,0,0,63,2', '557024172,0,0,42,2', '557024172,0,0,66,5', '557024172,0,0,53,1', '557024172,0,0,42,0', '557024172,0,0,16,0', '557024172,0,0,17,0', '557024172,0,0,67,1', '557024172,0,0,66,1', '557024172,0,0,17,3', '557024172,0,0,17,2', '557024172,0,0,52,1', '557024172,0,0,37,1', '557024172,0,0,63,4', '557024172,0,0,53,0', '557024172,0,0,53,3', '557024172,0,0,16,2', '557024172,0,0,67,3', '557024172,0,0,36,1', '557024172,0,0,66,3', '557024172,0,0,63,1', '557024172,0,0,16,3', '557024172,0,0,63,3', '557024172,0,0,17,1', '557024172,0,0,67,2', '557024172,0,0,37,0', '557024172,0,0,66,0', '557024172,0,0,36,2', '557024172,0,0,36,0', '557024172,0,0,63,5'}
   if focused_set:
+    print(focused_set)
     run(focused_set)
