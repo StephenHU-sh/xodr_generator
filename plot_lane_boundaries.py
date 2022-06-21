@@ -16,6 +16,7 @@ import fig_manipulator
 import xodr_exporter
 
 import shapely.geometry as sgeom
+from collections import OrderedDict
 
 cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
 region = None
@@ -24,7 +25,12 @@ polys = []
 focused_set = set()
 polys2 = []
 
-lanes = {}
+roads = {}
+
+class Lane:
+  def __init__(self, poly):
+    self.poly = poly
+    pass
 
 def get_polys_in_region():
   selected = set()
@@ -70,10 +76,10 @@ def toggle_selector(event):
     fig.canvas.draw()
     fig.canvas.flush_events()
   elif event.key == "e":
-    xodr_exporter.export(lanes)
+    xodr_exporter.export(roads)
 
 def run(focused_set2=set()):
-  global fig, polys, focused_set, lanes
+  global fig, polys, focused_set, roads
   focused_set = focused_set2
   fig, ax = plt.subplots()
   pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
@@ -81,12 +87,13 @@ def run(focused_set2=set()):
   #print(g["type"])
   #print(g["name"])
   #print(g["features"][0])
+  roads = OrderedDict()
 
   def on_pick(event):
     if event.mouseevent.key != 'control' or event.mouseevent.button != 1:
       return
     polygon_item.PolygonInteractor.picked = event.artist
-    #print(f"{event.artist}")
+    print(f"Lane[{event.artist.lane_id}] got picked.")
     fig.canvas.draw()
     fig.canvas.flush_events()
 
@@ -111,47 +118,72 @@ def run(focused_set2=set()):
     if focused_set and lane_id not in focused_set:
       continue
 
-    # if lane_id.find("557024173,0,0,7,") == -1:
-    #   continue
-    xx = [x for x,y,z in f["geometry"]["coordinates"]]
-    yy = [y for x,y,z in f["geometry"]["coordinates"]]
+    pos = lane_id.rfind(",")
+    road_id = lane_id[:pos]
+    lane_subid = lane_id[pos+1:]
+    lane_subid = int(lane_subid)
+    if road_id not in roads:
+      roads[road_id] = {}
+    roads[road_id][lane_subid] = Lane(f["geometry"]["coordinates"])
 
-    poly = Polygon(np.column_stack([xx, yy]), animated=True, color = (0,0,0,0))
-    ax.add_patch(poly)
-    poly.lane_id = lane_id
-    polys.append(poly)
-    p = polygon_item.PolygonInteractor(ax, poly)
-    c = matplotlib.colors.to_rgb(cycle[idx])
-    p.my_color = (c[0], c[1], c[2], 0.3)
-    p.my_color2 = (c[0], c[1], c[2], 0.6)
+  for road_id, road in roads.items():
+    print(road_id)
+    odict = OrderedDict([(k,v) for k, v in reversed(sorted(road.items()))])
+    roads[road_id] = odict
 
-    polys2.append(sgeom.Polygon([(x,y) for x,y,z in f["geometry"]["coordinates"]]))
+  base_x = 257983.394766
+  base_y = -49697.366495
+  for road_id, road in roads.items():
+    print(road_id)
+    for lane_idx, (lane_subid, lane) in enumerate(road.items()):
+      lane_geom = lane.poly
+      for pt_idx, (x,y,z) in enumerate(lane_geom):
+        lane_geom[pt_idx] = (x-base_x, y-base_y, z)
 
-    x_min = min(x_min, min(xx))
-    x_max = max(x_max, max(xx))
-    y_min = min(y_min, min(yy))
-    y_max = max(y_max, max(yy))
-    #break
+      print("\t", lane_subid)
+      xx = [x for x,y,z in lane_geom]
+      yy = [y for x,y,z in lane_geom]
 
-    if 1:
+      poly = Polygon(np.column_stack([xx, yy]), animated=True, color = (0,0,0,0))
+      ax.add_patch(poly)
+      poly.lane_id = (road_id, lane_subid)
+      polys.append(poly)
+      p = polygon_item.PolygonInteractor(ax, poly)
+      c = matplotlib.colors.to_rgb(cycle[idx])
+      p.my_color = (c[0], c[1], c[2], 0.3)
+      p.my_color2 = (c[0], c[1], c[2], 0.6)
+
+      polys2.append(sgeom.Polygon([(x,y) for x,y,z in lane_geom]))
+
+      x_min = min(x_min, min(xx))
+      x_max = max(x_max, max(xx))
+      y_min = min(y_min, min(yy))
+      y_max = max(y_max, max(yy))
+
       # split the lane polygon into two boundaries
-      two_side = False
       for idx in range(1, len(xx)-1):
         dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
         d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
         d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
-        dot /= math.sqrt(d2a*d2b+0.000000001)
+        dot /= math.sqrt(d2a*d2b+0.00000000001)
         if abs(dot) < 0.2:
-          #if lane_id.endswith(",0"):
-          #  plt.plot(xx[:idx], yy[:idx], "-")
-          #plt.plot(xx[idx+1:-1], yy[idx+1:-1], "-")
-          lanes[lane_id] = ((xx[:idx], yy[:idx]), (xx[idx+1:-1], yy[idx+1:-1]))
-          two_side = True
+          if lane_idx == 0:
+            print(len(xx), idx)
+            road.ref_line = (xx[:idx+1], yy[:idx+1])
+            if len(road.ref_line[0]) == 2: # add more points for a straight line with only 2 points
+              xx = [road.ref_line[0][0]*(5-a)/5 + road.ref_line[0][1]*a/5 for a in range(6)]
+              yy = [road.ref_line[1][0]*(5-a)/5 + road.ref_line[1][1]*a/5 for a in range(6)]
+              road.ref_line = (xx, yy)
+          road[lane_subid].left_bnd = (xx[:idx+1], yy[:idx+1])
+          road[lane_subid].right_bnd = (xx[idx+1:-1], yy[idx+1:-1])
           break
-    # else:
-    #   plt.plot(xx, yy, "-")
-    idx = (idx + 1) % len(cycle)
+      idx = (idx + 1) % len(cycle)
 
+  # draw reference lines
+  for road_id, road in roads.items():
+    plt.plot(road.ref_line[0], road.ref_line[1], "*")
+
+  # draw center lines
   region_min_pt = np.array([x_min, y_min])
   region_max_pt = np.array([x_max, y_max])
   for f in g["features"]:
@@ -215,5 +247,9 @@ if __name__ == '__main__':
   #focused_set = run()
   focused_set = {'557024172,0,0,52,2', '557024172,0,0,42,1', '557024172,0,0,42,3', '557024172,0,0,66,2', '557024172,0,0,52,0', '557024172,0,0,42,4', '557024172,0,0,16,1', '557024172,0,0,63,0', '557024172,0,0,16,4', '557024172,0,0,67,0', '557024172,0,0,53,2', '557024172,0,0,52,3', '557024172,0,0,67,5', '557024172,0,0,66,4', '557024172,0,0,67,4', '557024172,0,0,63,2', '557024172,0,0,42,2', '557024172,0,0,66,5', '557024172,0,0,53,1', '557024172,0,0,42,0', '557024172,0,0,16,0', '557024172,0,0,17,0', '557024172,0,0,67,1', '557024172,0,0,66,1', '557024172,0,0,17,3', '557024172,0,0,17,2', '557024172,0,0,52,1', '557024172,0,0,37,1', '557024172,0,0,63,4', '557024172,0,0,53,0', '557024172,0,0,53,3', '557024172,0,0,16,2', '557024172,0,0,67,3', '557024172,0,0,36,1', '557024172,0,0,66,3', '557024172,0,0,63,1', '557024172,0,0,16,3', '557024172,0,0,63,3', '557024172,0,0,17,1', '557024172,0,0,67,2', '557024172,0,0,37,0', '557024172,0,0,66,0', '557024172,0,0,36,2', '557024172,0,0,36,0', '557024172,0,0,63,5'}
   if focused_set:
-    print(focused_set)
+    focused_set2 = set()
+    for lane_id in sorted(list(focused_set)):
+      print(lane_id)
+      if lane_id.endswith(",0"):
+        focused_set2.add(lane_id)
     run(focused_set)
