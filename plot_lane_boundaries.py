@@ -27,10 +27,59 @@ polys2 = []
 
 roads = {}
 
+class Road:
+  def __init__(self, id):
+    self.id = id
+    self.lanes = OrderedDict()
+
+  def add_lane(self, lane):
+    self.lanes[lane.id] = lane
+
+  def sort_lanes(self):
+    self.lanes = OrderedDict([(k,v) for k, v in reversed(sorted(self.lanes.items()))])
+
+  def build_ref_line(self):
+    for id, lane in self.lanes.items():
+      self.ref_line = lane.left_bnd
+      # add more points for a straight line with only 2 points
+      if len(self.ref_line[0]) == 2:
+        xx = [self.ref_line[0][0]*(5-a)/5 + self.ref_line[0][1]*a/5 for a in range(6)]
+        yy = [self.ref_line[1][0]*(5-a)/5 + self.ref_line[1][1]*a/5 for a in range(6)]
+        self.ref_line = (xx, yy)
+      break # left-most lane only
+
+
 class Lane:
-  def __init__(self, poly):
+  def __init__(self, full_id, id, poly):
+    self.full_id = full_id
+    self.id = id
+
+    base_x = 257983.394766
+    base_y = -49697.366495
+    for pt_idx, (x,y,z) in enumerate(poly):
+      poly[pt_idx] = (x-base_x, y-base_y, z)
+    xx = [x for x,y,z in poly]
+    yy = [y for x,y,z in poly]
     self.poly = poly
-    pass
+
+    # split the lane polygon into two boundaries
+    self.left_bnd = []
+    self.right_bnd = []
+    for idx in range(1, len(xx)-1):
+      dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
+      d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
+      d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
+      dot /= math.sqrt(d2a*d2b+0.00000000001)
+      if abs(dot) < 0.2:
+        self.left_bnd = (xx[:idx+1], yy[:idx+1])
+        self.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
+        break
+
+    self.left_neighbors = set()
+    self.right_neighbors = set()
+    self.successors = set()
+    self.predecessors = set()
+
 
 def get_polys_in_region():
   selected = set()
@@ -78,38 +127,36 @@ def toggle_selector(event):
   elif event.key == "e":
     xodr_exporter.export(roads)
 
+
+def on_pick(event):
+  if event.mouseevent.key != 'control' or event.mouseevent.button != 1:
+    return
+  polygon_item.PolygonInteractor.picked = event.artist
+  print(f"Lane[{event.artist.lane_id}] got picked.")
+  fig.canvas.draw()
+  fig.canvas.flush_events()
+
+x_min = 1e30
+x_max = -1e30
+y_min = 1e30
+y_max = -1e30
+def update_world_box(xx, yy):
+  global x_min, x_max, y_min, y_max
+  x_min = min(x_min, min(xx))
+  x_max = max(x_max, max(xx))
+  y_min = min(y_min, min(yy))
+  y_max = max(y_max, max(yy))
+
 def run(focused_set2=set()):
   global fig, polys, focused_set, roads
+  global x_min, x_max, y_min, y_max
   focused_set = focused_set2
   fig, ax = plt.subplots()
   pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
   g = geojson.load(open("out.json"))
-  #print(g["type"])
-  #print(g["name"])
-  #print(g["features"][0])
+
   roads = OrderedDict()
 
-  def on_pick(event):
-    if event.mouseevent.key != 'control' or event.mouseevent.button != 1:
-      return
-    polygon_item.PolygonInteractor.picked = event.artist
-    print(f"Lane[{event.artist.lane_id}] got picked.")
-    fig.canvas.draw()
-    fig.canvas.flush_events()
-
-  # centerlines = {}
-  # for f in g["features"]:
-  #   if f["properties"]["layer"] == "center_line":
-  #     lane_id = f["properties"]["id"]
-  #     xx = [x for x,y,z in f["geometry"]["coordinates"]]
-  #     yy = [y for x,y,z in f["geometry"]["coordinates"]]
-  #     centerlines[lane_id] = (xx, yy)
-
-  x_min = 1e30
-  x_max = -1e30
-  y_min = 1e30
-  y_max = -1e30
-  idx = 0
   for f in g["features"]:
     if f["properties"]["layer"] != "lane":
       continue
@@ -120,64 +167,39 @@ def run(focused_set2=set()):
 
     pos = lane_id.rfind(",")
     road_id = lane_id[:pos]
-    lane_subid = lane_id[pos+1:]
-    lane_subid = int(lane_subid)
+    lane_subid = int(lane_id[pos+1:])
+
     if road_id not in roads:
-      roads[road_id] = {}
-    roads[road_id][lane_subid] = Lane(f["geometry"]["coordinates"])
+      roads[road_id] = Road(road_id)
+    roads[road_id].add_lane(Lane(lane_id, lane_subid, f["geometry"]["coordinates"]))
 
   for road_id, road in roads.items():
-    print(road_id)
-    odict = OrderedDict([(k,v) for k, v in reversed(sorted(road.items()))])
-    roads[road_id] = odict
+    road.sort_lanes()
+    road.build_ref_line()
 
-  base_x = 257983.394766
-  base_y = -49697.366495
+  # draw lane polygon
+  color_idx = 0
   for road_id, road in roads.items():
     print(road_id)
-    for lane_idx, (lane_subid, lane) in enumerate(road.items()):
-      lane_geom = lane.poly
-      for pt_idx, (x,y,z) in enumerate(lane_geom):
-        lane_geom[pt_idx] = (x-base_x, y-base_y, z)
-
+    for lane_subid, lane in road.lanes.items():
+      lane_poly = lane.poly
       print("\t", lane_subid)
-      xx = [x for x,y,z in lane_geom]
-      yy = [y for x,y,z in lane_geom]
+      xx = [x for x,y,z in lane_poly]
+      yy = [y for x,y,z in lane_poly]
 
       poly = Polygon(np.column_stack([xx, yy]), animated=True, color = (0,0,0,0))
       ax.add_patch(poly)
       poly.lane_id = (road_id, lane_subid)
       polys.append(poly)
+
       p = polygon_item.PolygonInteractor(ax, poly)
-      c = matplotlib.colors.to_rgb(cycle[idx])
+      c = matplotlib.colors.to_rgb(cycle[color_idx])
+      color_idx = (color_idx + 1) % len(cycle)
       p.my_color = (c[0], c[1], c[2], 0.3)
       p.my_color2 = (c[0], c[1], c[2], 0.6)
 
-      polys2.append(sgeom.Polygon([(x,y) for x,y,z in lane_geom]))
-
-      x_min = min(x_min, min(xx))
-      x_max = max(x_max, max(xx))
-      y_min = min(y_min, min(yy))
-      y_max = max(y_max, max(yy))
-
-      # split the lane polygon into two boundaries
-      for idx in range(1, len(xx)-1):
-        dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
-        d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
-        d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
-        dot /= math.sqrt(d2a*d2b+0.00000000001)
-        if abs(dot) < 0.2:
-          if lane_idx == 0:
-            print(len(xx), idx)
-            road.ref_line = (xx[:idx+1], yy[:idx+1])
-            if len(road.ref_line[0]) == 2: # add more points for a straight line with only 2 points
-              xx = [road.ref_line[0][0]*(5-a)/5 + road.ref_line[0][1]*a/5 for a in range(6)]
-              yy = [road.ref_line[1][0]*(5-a)/5 + road.ref_line[1][1]*a/5 for a in range(6)]
-              road.ref_line = (xx, yy)
-          road[lane_subid].left_bnd = (xx[:idx+1], yy[:idx+1])
-          road[lane_subid].right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
-          break
-      idx = (idx + 1) % len(cycle)
+      polys2.append(sgeom.Polygon([(x,y) for x,y,z in lane_poly]))
+      update_world_box(xx, yy)
 
   # draw reference lines
   for road_id, road in roads.items():
@@ -186,8 +208,6 @@ def run(focused_set2=set()):
     #plt.plot([x for x,y in bc_pts], [y for x,y in bc_pts], "x")
 
   # draw center lines
-  region_min_pt = np.array([x_min, y_min])
-  region_max_pt = np.array([x_max, y_max])
   for f in g["features"]:
     if f["properties"]["layer"] == "center_line":
       #print(f["properties"]["id"])
@@ -204,8 +224,6 @@ def run(focused_set2=set()):
       if not inside:
         continue
       plt.plot(xx, yy, "--")
-
-  #plt.plot(xx, yy, marker="o")
 
   # keep aspect ratio to 1:1 in meters
   w = 1800
@@ -225,8 +243,8 @@ def run(focused_set2=set()):
   ax.set_xlim((x_min, x_max))
   ax.set_ylim((y_min, y_max))
 
+  # handle lane picking, selection and keyborad events
   fig.canvas.mpl_connect('pick_event', on_pick)
-
   if not focused_set:
     # drawtype is 'box' or 'line' or 'none'
     toggle_selector.RS = RectangleSelector(ax, region_select_callback,

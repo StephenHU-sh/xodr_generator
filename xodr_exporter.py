@@ -68,7 +68,7 @@ def compute_bc_derivative(road):
     pts_b = []
     pts_a.append((road.ref_line[0][0], road.ref_line[1][0]))
     pts_b.append((road.ref_line[0][-1], road.ref_line[1][-1]))
-    for idx, (lane_subid, lane) in enumerate(road.items()):
+    for idx, (lane_subid, lane) in enumerate(road.lanes.items()):
         pts_a.append((lane.right_bnd[0][0], lane.right_bnd[1][0]))
         pts_b.append((lane.right_bnd[0][-1], lane.right_bnd[1][-1]))
     
@@ -95,7 +95,7 @@ def export_road(odr, road, road_id):
     centerlane = xodr.Lane(lane_type=xodr.LaneType.median)
     lanesection = xodr.LaneSection(0, centerlane)
     left_bnd_st = None
-    for idx, (lane_subid, lane) in enumerate(road.items()):
+    for idx, (lane_subid, lane) in enumerate(road.lanes.items()):
         #if idx > 1:
         #    continue
         width_a = []
