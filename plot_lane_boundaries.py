@@ -175,13 +175,15 @@ def run(focused_set2=set()):
               yy = [road.ref_line[1][0]*(5-a)/5 + road.ref_line[1][1]*a/5 for a in range(6)]
               road.ref_line = (xx, yy)
           road[lane_subid].left_bnd = (xx[:idx+1], yy[:idx+1])
-          road[lane_subid].right_bnd = (xx[idx+1:-1], yy[idx+1:-1])
+          road[lane_subid].right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
           break
       idx = (idx + 1) % len(cycle)
 
   # draw reference lines
   for road_id, road in roads.items():
     plt.plot(road.ref_line[0], road.ref_line[1], "*")
+    #bc_pts = xodr_exporter.compute_bc_derivative(road)
+    #plt.plot([x for x,y in bc_pts], [y for x,y in bc_pts], "x")
 
   # draw center lines
   region_min_pt = np.array([x_min, y_min])
