@@ -144,10 +144,10 @@ def export_road(odr, road, road_id):
     road = xodr.Road(road_id, planview, lanes)
     odr.add_road(road)
 
-def export(roads):
+def export(my_map):
     # create the opendrive
     odr = xodr.OpenDrive("myroad")
-    for idx, (road_id, road) in enumerate(roads.items()):
+    for idx, (road_id, road) in enumerate(my_map.roads.items()):
         #if road_id != "557024172,0,0,66":
         #    continue
         print(road_id)
