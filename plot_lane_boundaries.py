@@ -92,6 +92,31 @@ class Road:
         self.ref_line = (xx, yy)
       break # left-most lane only
 
+  def resample_ref_line(self, d, method="linear"):
+    pts = [(self.ref_line[0][idx], self.ref_line[1][idx]) for idx in range(len(self.ref_line[0]))]
+    if method == "linear":
+      pts = xodr_exporter.resample_linear(pts, d)
+    else:
+      #pts = xodr_exporter.resample_linear(pts, d)
+      pts = xodr_exporter.resample_cubic(pts, self.heading[0], self.heading[1], d)
+      # line1 = []
+      # line2 = []
+      # dd = math.pi / 2
+      # for d in range(10):
+      #   line1.append((pts[0][0] + d * math.cos(self.heading[0] - dd), pts[0][1] + d * math.sin(self.heading[0] - dd)))
+      # for d in range(10):
+      #   line2.append((pts[-1][0] + d * math.cos(self.heading[1] - dd), pts[-1][1] + d * math.sin(self.heading[1] - dd)))
+      # pts = list(reversed(line1)) + pts + line2
+
+    xx = [x for x, y in pts]
+    yy = [y for x, y in pts]
+    self.ref_line = (xx, yy)
+
+  def compute_ref_line_bc_derivative(self):
+    h1 = math.atan2(self.ref_line[1][1]-self.ref_line[1][0], self.ref_line[0][1]-self.ref_line[0][0])
+    h2 = math.atan2(self.ref_line[1][-1]-self.ref_line[1][-2], self.ref_line[0][-1]-self.ref_line[0][-2])
+    self.heading = (h1, h2)
+
   def debug_print(self):
     print(f"Road[{self.id}]")
     for lane_id, lane in self.lanes.items():
@@ -225,13 +250,22 @@ class RoadNetwork:
 
         self.compute_overlapped_lanes(lanes[i])
 
+  def smooth_ref_line_bc_derivative(self):
+    pass
+
+
   def build_lane_info(self):
     for road_id, road in self.roads.items():
       road.sort_lanes()
-    my_map.split_lane_poly()
-    my_map.compute_lane_topo()
+    self.split_lane_poly()
+    self.compute_lane_topo()
     for road_id, road in self.roads.items():
       road.build_ref_line()
+      road.resample_ref_line(5.0)
+      road.compute_ref_line_bc_derivative()
+    self.smooth_ref_line_bc_derivative()
+    for road_id, road in self.roads.items():
+      road.resample_ref_line(0.1, "cubic")
 
   def debug_print(self):
     for road_id, road in self.roads.items():

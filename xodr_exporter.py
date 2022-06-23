@@ -15,13 +15,11 @@ def resample_linear(pts, d=1.0):
         new_pts.append((pt.x, pt.y))
     return new_pts
 
-def resample_cubic(pts, a, b, d=0.1):
-    pts = resample_linear(pts, 10.0)
-    #return pts
-    param = list(range(len(pts)))
+def resample_cubic(pts, a, b, d):
+    param = list(range(0, len(pts)))
     if 1:
-        ref_x = CubicSpline(param, [x for x,y in pts], bc_type=((1, a[0]/10), (1, a[1]/10)), extrapolate=True)
-        ref_y = CubicSpline(param, [y for x,y in pts], bc_type=((1, b[0]/10), (1, b[1]/10)), extrapolate=True)
+        ref_x = CubicSpline(param, [x for x,y in pts], bc_type=((1, math.cos(a)), (1, math.cos(b))), extrapolate=True)
+        ref_y = CubicSpline(param, [y for x,y in pts], bc_type=((1, math.sin(a)), (1, math.sin(b))), extrapolate=True)
     else:
         ref_x = CubicSpline(param, [x for x,y in pts], bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
         ref_y = CubicSpline(param, [y for x,y in pts], bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
@@ -53,34 +51,11 @@ def pts_dir(pts):
         theta -= math.pi/2
         return math.cos(theta), math.sin(theta)
 
-def pts_dir2(pts):
-    headings = []
-    for idx in range(len(pts)-1):
-        dx = pts[idx+1][0] - pts[idx][0]
-        dy = pts[idx+1][1] - pts[idx][1]
-        headings.append(math.atan2(dy, dx))
-    print("\t heading: %.1f degree" % (mean(headings)/math.pi*180))
-    avg_heading = mean(headings) + math.pi/2
-    return math.cos(avg_heading), math.sin(avg_heading)
-
-def compute_bc_derivative(road):
-    pts_a = []
-    pts_b = []
-    pts_a.append((road.ref_line[0][0], road.ref_line[1][0]))
-    pts_b.append((road.ref_line[0][-1], road.ref_line[1][-1]))
-    for idx, (lane_subid, lane) in enumerate(road.lanes.items()):
-        pts_a.append((lane.right_bnd[0][0], lane.right_bnd[1][0]))
-        pts_b.append((lane.right_bnd[0][-1], lane.right_bnd[1][-1]))
-    
-    return pts_dir2(pts_a), pts_dir2(pts_b)
-
 def export_road(odr, road, road_id):
     planview = xodr.PlanView()
     s = 0.0
     ref_line = road.ref_line
     pts = [(ref_line[0][idx], ref_line[1][idx]) for idx in range(len(ref_line[0]))]
-    a, b = compute_bc_derivative(road)
-    pts = resample_cubic(pts, a, b, 0.1)
 
     ref = MultiLineString([(pts[idx], pts[idx+1]) for idx in range(len(pts)-1)])
     #CubicSpline([x for x,y in pts], [y for x,y in pts], bc_type=((2, 0.0), (2, 0.0)))
