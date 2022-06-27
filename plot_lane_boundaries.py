@@ -43,7 +43,7 @@ class Lane:
 
     base_x = -257882.086764
     base_y = 49751.229238
-    self.poly = [(x-base_x, y-base_y) for x,y,z in poly]
+    self.poly = [(x-base_x, y-base_y) for x,y in poly]
 
     # Split the lane polygon into two boundaries
     self.left_bnd = []  # ([x1,x2,...], [y1,y2,...])
@@ -171,6 +171,48 @@ class Road:
     h1 = math.atan2(self.ref_line[1][1]-self.ref_line[1][0], self.ref_line[0][1]-self.ref_line[0][0])
     h2 = math.atan2(self.ref_line[1][-1]-self.ref_line[1][-2], self.ref_line[0][-1]-self.ref_line[0][-2])
     self.heading = [h1, h2]
+
+  def merge_overlapped_lanes(self):
+    for (lane_id, lane) in self.lanes.items():
+      # Only handle at most 2 lanes got merged
+      assert(len(lane.overlapped) <= 1)
+      if len(lane.overlapped) > 0:
+        overlapped_lane = first(lane.overlapped)
+        if overlapped_lane.id + 1 == lane.id:
+          # Merge overlapped lane to left lane
+          print(f"Merge Lane[{lane.full_id}] and Lane[{overlapped_lane.full_id}]")
+          lane.right_bnd = overlapped_lane.right_bnd
+          lane.right_neighbors = overlapped_lane.right_neighbors
+          lane.predecessors = lane.predecessors.union(overlapped_lane.predecessors)
+          assert(len(overlapped_lane.right_neighbors) <= 1)
+          for lane2 in overlapped_lane.right_neighbors:
+            lane2.left_neighbors.remove(overlapped_lane)
+            lane2.left_neighbors.add(lane)
+          for lane2 in overlapped_lane.predecessors:
+            lane2.successors.remove(overlapped_lane)
+            lane2.successors.add(lane)
+          for lane2 in overlapped_lane.successors:
+            lane2.predecessors.remove(overlapped_lane)
+            lane2.predecessors.add(lane)
+          assert(len(lane.predecessors) <= 2)
+          if len(lane.predecessors) > 1:
+            for lane2 in lane.predecessors:
+              for lane3 in lane.predecessors:
+                if lane2 != lane3:
+                  lane2.overlapped.add(lane3)
+          lane.successors = lane.successors.union(overlapped_lane.successors)
+          assert(len(lane.successors) <= 2)
+          if len(lane.successors) > 1:
+            for lane2 in lane.successors:
+              for lane3 in lane.successors:
+                if lane2 != lane3:
+                  lane2.overlapped.add(lane3)
+          lane.overlapped = set()
+          lane.reducing = False
+          lane.growning = False
+          del self.lanes[overlapped_lane.id]
+          return True
+    return False
 
   def __repr__(self):
     return f"Road[{self.id}]"
@@ -311,6 +353,14 @@ class RoadNetwork:
           self.reducing = True
 
         self.compute_overlapped_lanes(lanes[i])
+
+  def merge_overlapped_lanes(self):
+    while True:
+      lanes_got_merged = False
+      for road_id, road in self.roads.items():
+        lanes_got_merged = lanes_got_merged or road.merge_overlapped_lanes()
+      if not lanes_got_merged:
+        break
 
   def update_separator_ids(self, separator_ids, start_sep, end_sep):
     if end_sep in separator_ids and start_sep not in separator_ids:
@@ -608,6 +658,8 @@ class RoadNetwork:
       road.sort_lanes()
     self.split_lane_poly()
     self.compute_lane_topo()
+    self.merge_overlapped_lanes()
+
     for road_id, road in self.roads.items():
       road.build_ref_line()
       road.resample_ref_line(5.0)
@@ -715,7 +767,7 @@ def run(focused_set2=set()):
 
     if road_id not in my_map.roads:
       my_map.add_road(road_id)
-    my_map.roads[road_id].add_lane(Lane(lane_id, lane_subid, f["geometry"]["coordinates"]))
+    my_map.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
 
   my_map.build_lane_info()
   my_map.debug_print()
