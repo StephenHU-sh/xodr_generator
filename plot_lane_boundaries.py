@@ -27,11 +27,25 @@ polys2 = []
 my_map = None
 
 
+def dist2(p1, p2):
+  return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+
 def is_almost_the_same_pt(p1, p2):
-  return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2) < 0.05 * 0.05
+  return dist2(p1, p2) < 0.05 * 0.05
+
+def curvature(x, y):
+  triangle_area = abs((x[1]-x[0])*(y[2]-y[0]) - (y[1]-y[0])*(x[2]-x[0]))
+  a = dist2((x[0], y[0]), (x[1], y[1]))
+  b = dist2((x[2], y[2]), (x[1], y[1]))
+  c = dist2((x[0], y[0]), (x[2], y[2]))
+  return 4 * triangle_area / math.sqrt(a * b * c)
 
 def pt_hash(x, y):
   return "%.2f,%.2f" % (x, y)
+
+class SeparatorID:
+  def __init__(self, id):
+    self.v = id
 
 class Lane:
   def __init__(self, full_id, id, poly):
@@ -77,6 +91,7 @@ class Road:
 
   def add_lane(self, lane):
     lane.road_id = self.id
+    lane.road = self
     self.lanes[lane.id] = lane
 
   def sort_lanes(self):
@@ -115,7 +130,10 @@ class Road:
   def compute_ref_line_bc_derivative(self):
     h1 = math.atan2(self.ref_line[1][1]-self.ref_line[1][0], self.ref_line[0][1]-self.ref_line[0][0])
     h2 = math.atan2(self.ref_line[1][-1]-self.ref_line[1][-2], self.ref_line[0][-1]-self.ref_line[0][-2])
-    self.heading = (h1, h2)
+    self.heading = [h1, h2]
+
+  def __repr__(self):
+    return f"Road[{self.id}]"
 
   def debug_print(self):
     print(f"Road[{self.id}]")
@@ -250,9 +268,158 @@ class RoadNetwork:
 
         self.compute_overlapped_lanes(lanes[i])
 
-  def smooth_ref_line_bc_derivative(self):
-    pass
+  def update_separator_ids(self, start_sep, end_sep):
+    if end_sep in self.separator_ids and start_sep not in self.separator_ids:
+      self.separator_ids[start_sep] = self.separator_ids[end_sep]
+    elif end_sep not in self.separator_ids and start_sep in self.separator_ids:
+      self.separator_ids[end_sep] = self.separator_ids[start_sep]
+    elif end_sep not in self.separator_ids and start_sep not in self.separator_ids:
+      new_id = SeparatorID(len(self.separator_ids))
+      self.separator_ids[start_sep] = new_id
+      self.separator_ids[end_sep] = new_id
+    elif end_sep in self.separator_ids and start_sep in self.separator_ids:
+      if self.separator_ids[start_sep].v != self.separator_ids[end_sep]:
+        self.separator_ids[start_sep].v = self.separator_ids[end_sep].v
 
+  def find_common_lane_bnd_pt(self, seps, terminal_type):
+    pts_hashmap = {}
+    base_pts = []
+    for road, start_or_end in seps:
+      if start_or_end == terminal_type:
+        pt_idx = 0 if terminal_type == "start" else -1
+        pt_idx2 = -1 if terminal_type == "start" else 0
+        for lane_id, lane in road.lanes.items():
+          pt_left1 = (lane.left_bnd[0][pt_idx], lane.left_bnd[1][pt_idx])
+          pt_left1_hash = pt_hash(pt_left1[0], pt_left1[1])
+          pt_left2_hash = pt_hash(lane.left_bnd[0][pt_idx2], lane.left_bnd[1][pt_idx2])
+          if pt_left1_hash not in pts_hashmap:
+            pts_hashmap[pt_left1_hash] = set()
+          elif pt_left2_hash not in pts_hashmap[pt_left1_hash]:
+            base_pts.append(pt_left1)
+          pts_hashmap[pt_left1_hash].add(pt_left2_hash)
+          pt_right1 = (lane.right_bnd[0][pt_idx], lane.right_bnd[1][pt_idx])
+          pt_right1_hash = pt_hash(pt_right1[0], pt_right1[1])
+          pt_right2_hash = pt_hash(lane.right_bnd[0][pt_idx2], lane.right_bnd[1][pt_idx2])
+          if pt_right1_hash not in pts_hashmap:
+            pts_hashmap[pt_right1_hash] = set()
+          elif pt_right2_hash not in pts_hashmap[pt_right1_hash]:  # not shared on the other terminal
+            base_pts.append(pt_right1)
+          pts_hashmap[pt_right1_hash].add(pt_right2_hash)
+    return base_pts
+
+  def smooth_ref_line_bc_derivative(self):
+    # find lane terminals shared same directions
+    self.separator_ids = {}
+    self.separator_set = {}
+    for road_id, road in self.roads.items():
+      for lane_id, lane in road.lanes.items():
+        for lane2 in lane.predecessors:
+          end_sep = (lane2.road, "end")
+          start_sep = (road, "start")
+          self.update_separator_ids(start_sep, end_sep)
+        for lane2 in lane.successors:
+          start_sep = (lane2.road, "start")
+          end_sep = (road, "end")
+          self.update_separator_ids(start_sep, end_sep)
+    # for k, v in self.separator_ids.items():
+    #   print(f"{k}: {v.v}")
+    # print("-------------")
+    for sep, sep_id in self.separator_ids.items():
+      if sep_id not in self.separator_set:
+        self.separator_set[sep_id] = set()
+      self.separator_set[sep_id].add(sep)
+    for id, seps in self.separator_set.items():
+       print(f"{id.v}: {seps}")
+
+    self.debug_pts = []
+    sep_set = {}
+    # select road direction at terminals
+    for sep_set_id, seps in self.separator_set.items():
+      start_count = 0
+      end_count = 0
+      road_with_start_point = None
+      road_with_end_point = None
+      for sep in seps:
+        if sep[1] == "start":
+          start_count += 1
+          road_with_start_point = sep[0]
+        else:
+          end_count += 1
+          road_with_end_point = sep[0]
+      # select road direction from road merged to or split from
+      if start_count > 1 and end_count == 1:
+        heading = road_with_end_point.heading[1]
+      elif start_count == 1 and end_count > 1:
+        heading = road_with_start_point.heading[0]
+      else: # or select direction of the most straight road
+        min_curvature = 999999
+        for road, start_or_end in seps:
+          r = road.ref_line
+          if start_or_end == "start":
+            c = curvature(r[0][0:3], r[1][0:3])
+          else:
+            c = curvature(r[0][-3:], r[1][-3:])
+          if c < min_curvature:
+            c = min_curvature
+            heading = road.heading[0 if start_or_end == "start" else 1]
+      for road, start_or_end in seps:
+        idx = 0 if start_or_end == "start" else 1
+        road.heading[idx] = heading
+      sep_set[sep_set_id] = [heading, None]
+
+    # determine separation line base point
+    for sep_set_id, seps in self.separator_set.items():
+      base_pts = []
+      # # find points at lane tips with zero lane width
+      # for idx, (road, start_or_end) in enumerate(seps):
+      #   pt_idx = 0 if start_or_end == "start" else -1
+      #   for lane_id, lane in road.lanes.items():
+      #     pt1_hash = pt_hash(lane.left_bnd[0][pt_idx], lane.left_bnd[1][pt_idx])
+      #     pt2_hash = pt_hash(lane.right_bnd[0][pt_idx], lane.right_bnd[1][pt_idx])
+      #     if pt1_hash == pt2_hash:
+      #       base_pts.append((lane.left_bnd[0][pt_idx], lane.left_bnd[1][pt_idx]))
+      # find shared start/end points among roads
+      base_pts += self.find_common_lane_bnd_pt(seps, "start")
+      base_pts += self.find_common_lane_bnd_pt(seps, "end")
+      
+
+      assert(len(base_pts) > 0 or len(seps) == 2)
+      if len(base_pts) == 0:
+        for idx, (road, start_or_end) in enumerate(seps):
+          pt_idx = 0 if start_or_end == "start" else -1
+          if idx == 0:
+            base_pt1 = (road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])
+          else:
+            base_pt2 = (road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])
+        base_pts.append(((base_pt1[0]+base_pt2[0])/2, (base_pt1[1]+base_pt2[1])/2))
+
+      self.debug_pts += base_pts
+      print(f"{sep_set_id.v}: {seps}")
+      print("\t", base_pts)
+      print("==========================================")
+
+      # elif len(seps) > 2:
+      #   start_count = 0
+      #   end_count = 0
+      #   start_set = set()
+      #   end_set = set()
+      #   for road, start_or_end in seps:
+      #     if start_or_end == "start":
+      #       start_count += 1
+      #       start_set.add(road)
+      #     else:
+      #       end_count += 1
+      #       end_set.add(road)
+      #   assert(len(start_set) == len(end_set))
+      #   if len(start_set) > len(end_set):
+      #     base_pt = common_lane_bnd_pt(start_set, "start")
+      #   else:
+      #     base_pt = common_lane_bnd_pt(end_set, "end")
+      # sep_set[sep_set_id][1] = base_pt
+
+
+  def project_bnd_endpoints_to_separation_line_of_lane_connections(self):
+    pass
 
   def build_lane_info(self):
     for road_id, road in self.roads.items():
@@ -369,7 +536,7 @@ def run(focused_set2=set()):
     my_map.roads[road_id].add_lane(Lane(lane_id, lane_subid, f["geometry"]["coordinates"]))
 
   my_map.build_lane_info()
-  my_map.debug_print()
+  #my_map.debug_print()
 
   # draw lane polygon
   color_idx = 0
@@ -408,6 +575,9 @@ def run(focused_set2=set()):
     plt.plot(road.ref_line[0], road.ref_line[1], "*")
     #bc_pts = xodr_exporter.compute_bc_derivative(road)
     #plt.plot([x for x,y in bc_pts], [y for x,y in bc_pts], "x")
+
+  # draw debug points
+  plt.plot([x for x, y in my_map.debug_pts], [y for x, y in my_map.debug_pts], "ro", )
 
   # draw center lines
   for f in g["features"]:
