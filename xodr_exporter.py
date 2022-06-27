@@ -5,6 +5,8 @@ import os
 import math
 from scipy.interpolate import interp1d, CubicSpline
 from scipy import stats, mean
+from geom_utils import xxyy2xyxy, xyxy2xxyy
+
 
 def resample_linear(pts, d=1.0):
     ref = LineString(pts)
@@ -17,12 +19,13 @@ def resample_linear(pts, d=1.0):
 
 def resample_cubic(pts, a, b, d):
     param = list(range(0, len(pts)))
+    xx, yy = xyxy2xxyy(pts)
     if 1:
-        ref_x = CubicSpline(param, [x for x,y in pts], bc_type=((1, math.cos(a)), (1, math.cos(b))), extrapolate=True)
-        ref_y = CubicSpline(param, [y for x,y in pts], bc_type=((1, math.sin(a)), (1, math.sin(b))), extrapolate=True)
+        ref_x = CubicSpline(param, xx, bc_type=((1, math.cos(a)), (1, math.cos(b))), extrapolate=True)
+        ref_y = CubicSpline(param, yy, bc_type=((1, math.sin(a)), (1, math.sin(b))), extrapolate=True)
     else:
-        ref_x = CubicSpline(param, [x for x,y in pts], bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
-        ref_y = CubicSpline(param, [y for x,y in pts], bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
+        ref_x = CubicSpline(param, xx, bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
+        ref_y = CubicSpline(param, yy, bc_type=((2, 0.0), (2, 0.0)), extrapolate=True)
     new_pts = []
     n = math.ceil(param[-1] / d)
     for idx in range(0, n+1):
@@ -32,8 +35,7 @@ def resample_cubic(pts, a, b, d):
     return new_pts
 
 def pts_dir(pts):
-    pts_x = [x for x,y in pts]
-    pts_y = [y for x,y in pts]
+    pts_x, pts_y = xyxy2xxyy(pts)
     min_pts_x = min(pts_x)
     min_pts_y = min(pts_y)
     max_pts_x = max(pts_x)
@@ -54,11 +56,9 @@ def pts_dir(pts):
 def export_road(odr, road, road_id):
     planview = xodr.PlanView()
     s = 0.0
-    ref_line = road.ref_line
-    pts = [(ref_line[0][idx], ref_line[1][idx]) for idx in range(len(ref_line[0]))]
+    pts = xxyy2xyxy(road.ref_line)
 
     ref = LineString(pts)
-    #CubicSpline([x for x,y in pts], [y for x,y in pts], bc_type=((2, 0.0), (2, 0.0)))
     for idx in range(len(pts)-1):
         dx = pts[idx+1][0] - pts[idx][0]
         dy = pts[idx+1][1] - pts[idx][1]
@@ -86,7 +86,7 @@ def export_road(odr, road, road_id):
         #     print(f"[{lane.full_id}] start ","    right_bnd_pts: %.10f %.10f" % (right_bnd_pts[0][0], right_bnd_pts[0][1]))
         #     print(f"[{lane.full_id}] start ","new_right_bnd_pts: %.10f %.10f" % (new_right_bnd_pts[0][0], new_right_bnd_pts[0][1]))
 
-        ## todo: resampling introduces more accumulated errors on lanes of curved roads.
+        ## TODO: Resampling introduces more accumulated errors on lanes of curved roads.
         #right_bnd_pts = resample_linear(right_bnd_pts, 0.1)
         
         #print(lane_subid, right_bnd.length)
@@ -139,7 +139,6 @@ def export_road(odr, road, road_id):
     odr.add_road(road)
 
 def export(my_map):
-    # create the opendrive
     odr = xodr.OpenDrive("myroad")
     for idx, (road_id, road) in enumerate(my_map.roads.items()):
         #if road_id != "557024172,0,0,66":

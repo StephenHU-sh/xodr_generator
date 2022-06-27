@@ -16,6 +16,7 @@ from matplotlib.widgets import RectangleSelector
 import polygon_item
 import fig_manipulator
 import xodr_exporter
+from geom_utils import WorldBox, first, dist2, is_almost_the_same_pt, curvature, pt_hash, xxyy2xyxy, xyxy2xxyy
 
 import shapely.geometry as sgeom
 from shapely.ops import split
@@ -29,31 +30,6 @@ polys = []
 focused_set = set()
 polys2 = []
 my_map = None
-
-def first(c):
-  return next(iter(c))
-
-def dist2(p1, p2):
-  return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
-
-def is_almost_the_same_pt(p1, p2):
-  return dist2(p1, p2) < 0.05 * 0.05
-
-def curvature(x, y):
-  triangle_area = abs((x[1]-x[0])*(y[2]-y[0]) - (y[1]-y[0])*(x[2]-x[0]))
-  a = dist2((x[0], y[0]), (x[1], y[1]))
-  b = dist2((x[2], y[2]), (x[1], y[1]))
-  c = dist2((x[0], y[0]), (x[2], y[2]))
-  return 4 * triangle_area / math.sqrt(a * b * c)
-
-def pt_hash(x, y):
-  return "%.2f,%.2f" % (x, y)
-
-def xxyy2xyxy(xxyy):
-  return [(xxyy[0][idx], xxyy[1][idx]) for idx in range(len(xxyy[0]))]
-
-def xyxy2xxyy(xy):
-  return ([x for x, y in xy], [y for x, y in xy])
 
 class SeparatorID:
   def __init__(self, id):
@@ -69,7 +45,7 @@ class Lane:
     base_y = 49751.229238
     self.poly = [(x-base_x, y-base_y) for x,y,z in poly]
 
-    # split the lane polygon into two boundaries
+    # Split the lane polygon into two boundaries
     self.left_bnd = []  # ([x1,x2,...], [y1,y2,...])
     self.right_bnd = []
     self.left_bnd_to_recut = []  # [(x1,y1),(x2,y2),...])
@@ -84,9 +60,6 @@ class Lane:
     self.growning = False
 
   def recut_bnd(self, base_pt, heading, start_or_end):
-    #if self.road_id in ("557024172,0,0,66", "557024172,0,0,67", "557024172,0,0,17", "557024172,0,0,37", "557024172,0,0,52", "557024172,0,0,63"):
-    #  return []
-
     d = 20.0
     heading += math.pi / 2
     separator_line = [(base_pt[0] + d * math.cos(heading), base_pt[1] + d * math.sin(heading))]
@@ -97,32 +70,13 @@ class Lane:
     separator_polyline = sgeom.LineString(separator_line)
 
     result = split(left_bnd_polyline, separator_polyline)
-    #aa = separator_polyline.buffer(1e-13)
-    #result = left_bnd_polyline.difference(separator_polyline.buffer(1e-13))
     if len(result.geoms) < 2:
-      #return [xxyy2xyxy(result.geoms[0].xy)]
+      # Failed to cut the boundary. Show debug lines.
       return [self.left_bnd_to_recut, separator_line]
     left1_pts = [result.geoms[0].xy[0], result.geoms[0].xy[1]]
     left2_pts = [result.geoms[1].xy[0], result.geoms[1].xy[1]]
     left_sep_pt = left_bnd_polyline.intersection(separator_polyline)
-    #print(self.full_id)
-    # return []
-    # return [separator_line, self.left_bnd_to_recut]
-    # return [separator_line, xxyy2xyxy(left1_pts), xxyy2xyxy(left2_pts)]
-
-    # shapely.geometry.point.Point
-    # shapely.geometry.multipoint.MultiPoint
-    # shapely.geometry.linestring.LineString
-    #print(f"Lane[{self.full_id}]: {start_or_end}")
-    #print(type(left_sep_pt))
-    # if not isinstance(left_sep_pt, Point):
-    #   return [self.left_bnd_to_recut, separator_line, [(g.x, g.y) for g in left_sep_pt.geoms]]
-    # assert(isinstance(left_sep_pt, Point))
-
-    # if isinstance(left_sep_pt, MultiPoint):
-    #   pt1 = left_sep_pt.geoms[0]
-    #   pt2 = left_sep_pt.geoms[1]
-    #   left_sep_pt = Point((pt1.x + pt2.x) / 2, (pt1.y + pt2.y) / 2)
+    assert(isinstance(left_sep_pt, Point))
 
     if start_or_end == "start":
       self.left_bnd_to_recut = [(left_sep_pt.x, left_sep_pt.y)] + xxyy2xyxy(left2_pts)
@@ -130,24 +84,13 @@ class Lane:
       self.left_bnd_to_recut = xxyy2xyxy(left1_pts) + [(left_sep_pt.x, left_sep_pt.y)]
 
     result = split(right_bnd_polyline, separator_polyline)
-    #result = right_bnd_polyline.difference(separator_polyline.buffer(1e-13))
     if len(result.geoms) < 2:
-      #return [xxyy2xyxy(result.geoms[0].xy)]
+      # Failed to cut the boundary. Show debug lines.
       return [self.right_bnd_to_recut, separator_line]
     right1_pts = [result.geoms[0].xy[0], result.geoms[0].xy[1]]
     right2_pts = [result.geoms[1].xy[0], result.geoms[1].xy[1]]
     right_sep_pt = right_bnd_polyline.intersection(separator_polyline)
-
-    #print(f"Lane[{self.full_id}]: {start_or_end}")
-    #print(type(right_sep_pt))
-    # if not isinstance(right_sep_pt, Point):
-    #   return [self.right_bnd_to_recut, separator_line, [(g.x, g.y) for g in right_sep_pt.geoms]]
-    # assert(isinstance(right_sep_pt, Point))
-
-    # if isinstance(right_sep_pt, MultiPoint):
-    #   pt1 = right_sep_pt.geoms[0]
-    #   pt2 = right_sep_pt.geoms[1]
-    #   right_sep_pt = Point((pt1.x + pt2.x) / 2, (pt1.y + pt2.y) / 2)
+    assert(isinstance(right_sep_pt, Point))
 
     if start_or_end == "start":
       self.right_bnd_to_recut = [(right_sep_pt.x, right_sep_pt.y)] + xxyy2xyxy(right2_pts)
@@ -198,7 +141,7 @@ class Road:
   def build_ref_line(self):
     for id, lane in self.lanes.items():
       self.ref_line = lane.left_bnd
-      # add more points for a straight line with only 2 points
+      # Add more points for a straight line with only 2 points
       if len(self.ref_line[0]) == 2:
         xx = [self.ref_line[0][0]*(5-a)/5 + self.ref_line[0][1]*a/5 for a in range(6)]
         yy = [self.ref_line[1][0]*(5-a)/5 + self.ref_line[1][1]*a/5 for a in range(6)]
@@ -212,7 +155,7 @@ class Road:
     else:
       #pts = xodr_exporter.resample_linear(pts, d)
       pts = xodr_exporter.resample_cubic(pts, self.heading[0], self.heading[1], d)
-      if 0: # show heading normals at tip of reference lines
+      if 0: # Show heading normals at tip of reference lines
         line1 = []
         line2 = []
         dd = math.pi / 2
@@ -222,9 +165,7 @@ class Road:
           line2.append((pts[-1][0] + d * math.cos(self.heading[1] - dd), pts[-1][1] + d * math.sin(self.heading[1] - dd)))
         pts = list(reversed(line1)) + pts + line2
 
-    xx = [x for x, y in pts]
-    yy = [y for x, y in pts]
-    self.ref_line = (xx, yy)
+    self.ref_line = xyxy2xxyy(pts)
 
   def compute_ref_line_bc_derivative(self):
     h1 = math.atan2(self.ref_line[1][1]-self.ref_line[1][0], self.ref_line[0][1]-self.ref_line[0][0])
@@ -283,7 +224,7 @@ class RoadNetwork:
   def split_lane_poly(self):
     self.pt2lane = {}
 
-    # build pt hash
+    # Build hash table for boundary points
     for road_id, road in self.roads.items():
       for lane_id, lane in road.lanes.items():
         for pt in lane.poly:
@@ -296,7 +237,7 @@ class RoadNetwork:
       for lane_id, lane in road.lanes.items():
         xx, yy = xyxy2xxyy(lane.poly)
 
-        # split poly ring on the point shared by other road
+        # Split poly ring on the point shared by other road
         split_pt_indices = []
         for idx, pt in enumerate(lane.poly):
           if idx == 0 or idx + 2 >= len(lane.poly):
@@ -306,7 +247,7 @@ class RoadNetwork:
               split_pt_indices.append(idx)
               break
 
-        # split poly ring by reversed direction
+        # Split poly ring at the position where direction got reversed.
         if len(split_pt_indices) != 2:
           for idx in range(1, len(xx)-1):
             dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
@@ -323,7 +264,7 @@ class RoadNetwork:
         lane.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
 
   def compute_overlapped_lanes(self, lane):
-    # spliting
+    # Spliting
     to_del = []
     for lane2 in lane.predecessors:
       if lane.road_id == lane2.road_id:
@@ -333,7 +274,7 @@ class RoadNetwork:
     for lane3 in to_del:
       lane.predecessors.remove(lane3)
 
-    # merging
+    # Merging
     to_del = []
     for lane2 in lane.successors:
       if lane.road_id == lane2.road_id:
@@ -371,18 +312,18 @@ class RoadNetwork:
 
         self.compute_overlapped_lanes(lanes[i])
 
-  def update_separator_ids(self, start_sep, end_sep):
-    if end_sep in self.separator_ids and start_sep not in self.separator_ids:
-      self.separator_ids[start_sep] = self.separator_ids[end_sep]
-    elif end_sep not in self.separator_ids and start_sep in self.separator_ids:
-      self.separator_ids[end_sep] = self.separator_ids[start_sep]
-    elif end_sep not in self.separator_ids and start_sep not in self.separator_ids:
-      new_id = SeparatorID(len(self.separator_ids))
-      self.separator_ids[start_sep] = new_id
-      self.separator_ids[end_sep] = new_id
-    elif end_sep in self.separator_ids and start_sep in self.separator_ids:
-      if self.separator_ids[start_sep].v != self.separator_ids[end_sep]:
-        self.separator_ids[start_sep].v = self.separator_ids[end_sep].v
+  def update_separator_ids(self, separator_ids, start_sep, end_sep):
+    if end_sep in separator_ids and start_sep not in separator_ids:
+      separator_ids[start_sep] = separator_ids[end_sep]
+    elif end_sep not in separator_ids and start_sep in separator_ids:
+      separator_ids[end_sep] = separator_ids[start_sep]
+    elif end_sep not in separator_ids and start_sep not in separator_ids:
+      new_id = SeparatorID(len(separator_ids))
+      separator_ids[start_sep] = new_id
+      separator_ids[end_sep] = new_id
+    elif end_sep in separator_ids and start_sep in separator_ids:
+      if separator_ids[start_sep].v != separator_ids[end_sep]:
+        separator_ids[start_sep].v = separator_ids[end_sep].v
 
   def find_common_lane_bnd_pt(self, seps, terminal_type):
     pts_hashmap = {}
@@ -419,121 +360,30 @@ class RoadNetwork:
       heading = math.atan2(bnd[-1][1]-bnd[-2][1], bnd[-1][0]-bnd[-2][0])
       bnd.append((bnd[-1][0]+math.cos(heading)*d, bnd[-1][1]+math.sin(heading)*d))
 
-  def prepare_for_bnd_recut(self, sep_set):
-    roads_to_recut_bnd = {}
-    for sep_set_id, seps in self.separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]      
-      if len(base_pts) != 1:
-        continue
-      for road, start_or_end in seps:
-        roads_to_recut_bnd[road] = (True, True)
-    # for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
-    #   for lane_id, lane in road.lanes.items():
-    #     if len(lane.predecessors) > 1:
-    #       cut_start = False
-    #       break
-    #   for lane_id, lane in road.lanes.items():
-    #     if len(lane.successors) > 1:
-    #       cut_end = False
-    #       break
-    #   roads_to_recut_bnd[road] = (cut_start, cut_end)
-
-    # extend lane boundaries
-    for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
-      for lane_id, lane in road.lanes.items():
-        left_bnd = deque(xxyy2xyxy(lane.left_bnd))
-        right_bnd = deque(xxyy2xyxy(lane.right_bnd))
-        if cut_start:
-          if len(lane.predecessors) != 0:
-             # with boundaries of predecessor lane
-            prev_lane = first(lane.predecessors)
-            left_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.left_bnd)))
-            right_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.right_bnd)))
-          else:
-            if len(lane.left_neighbors) and len(first(lane.left_neighbors).predecessors) > 0:
-              # with the right boundary of left neighbor's predecessor lane
-              neighbor_prev_lane = first(first(lane.left_neighbors).predecessors)
-              left_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.right_bnd)))
-            else:
-              # by extrapolation
-              self.extend_bnd_by_extrapolation(left_bnd, "start")
-            if len(lane.right_neighbors) and len(first(lane.right_neighbors).predecessors) > 0:
-              # with the left boundary of right neighbor's predecessor lane
-              neighbor_prev_lane = first(first(lane.right_neighbors).predecessors)
-              right_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.left_bnd)))
-            else:
-              # by extrapolation
-              self.extend_bnd_by_extrapolation(right_bnd, "start")
-        if cut_end:
-          if len(lane.successors) != 0:
-             # with boundaries of predecessor lane
-            next_lane = first(lane.successors)
-            left_bnd.extend(xxyy2xyxy(next_lane.left_bnd))
-            right_bnd.extend(xxyy2xyxy(next_lane.right_bnd))
-          else:
-            if len(lane.left_neighbors) and len(first(lane.left_neighbors).successors) > 0:
-              # with right boundary of left neighbor's successor lane
-              neighbor_next_lane = first(first(lane.left_neighbors).successors)
-              left_bnd.extend(xxyy2xyxy(neighbor_next_lane.right_bnd))
-            else:
-              # by extrapolation
-              self.extend_bnd_by_extrapolation(left_bnd, "end")
-            if len(lane.right_neighbors) and len(first(lane.right_neighbors).successors) > 0:
-              # with left boundary of right neighbor's successor lane
-              neighbor_next_lane = first(first(lane.right_neighbors).successors)
-              right_bnd.extend(xxyy2xyxy(neighbor_next_lane.left_bnd))
-            else:
-              # by extrapolation
-              self.extend_bnd_by_extrapolation(right_bnd, "end")
-        lane.left_bnd_to_recut = left_bnd
-        lane.right_bnd_to_recut = right_bnd
-
-  def recut_bnd(self, sep_set):
-    for sep_set_id, seps in self.separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]
-      if len(base_pts) == 1:
-        for road, start_or_end in seps:
-          for lane_id, lane in road.lanes.items():
-            if len(self.debug_pts) == 0:
-              self.debug_pts = lane.recut_bnd(base_pts[0], heading, start_or_end)
-    # move results from temp var to the final lane.left_bnd/right_bnd
-    for sep_set_id, seps in self.separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]
-      if len(base_pts) == 1:
-        for road, start_or_end in seps:
-          for lane_id, lane in road.lanes.items():
-            if len(lane.left_bnd_to_recut) > 0:
-              lane.left_bnd = xyxy2xxyy(lane.left_bnd_to_recut)
-              lane.left_bnd_to_recut = []
-            if len(lane.right_bnd_to_recut) > 0:
-              lane.right_bnd = xyxy2xxyy(lane.right_bnd_to_recut)
-              lane.right_bnd_to_recut = []
-
-  def refine_lane_terminals(self):
-    # find lane terminals shared same directions
-    self.separator_ids = {}
-    self.separator_set = {}
+  def find_lane_terminals_shared_same_directions(self):
+    separator_ids = {}
+    separator_set = {}
     for road_id, road in self.roads.items():
       for lane_id, lane in road.lanes.items():
         for lane2 in lane.predecessors:
           end_sep = (lane2.road, "end")
           start_sep = (road, "start")
-          self.update_separator_ids(start_sep, end_sep)
+          self.update_separator_ids(separator_ids, start_sep, end_sep)
         for lane2 in lane.successors:
           start_sep = (lane2.road, "start")
           end_sep = (road, "end")
-          self.update_separator_ids(start_sep, end_sep)
+          self.update_separator_ids(separator_ids, start_sep, end_sep)
     # for k, v in self.separator_ids.items():
     #   print(f"{k}: {v.v}")
     # print("-------------")
     max_sep_id = -1
-    for sep, sep_id in self.separator_ids.items():
+    for sep, sep_id in separator_ids.items():
       max_sep_id = max(max_sep_id, sep_id.v)
-      if sep_id not in self.separator_set:
-        self.separator_set[sep_id] = set()
-      self.separator_set[sep_id].add(sep)
+      if sep_id not in separator_set:
+        separator_set[sep_id] = set()
+      separator_set[sep_id].add(sep)
 
-    for id, seps in self.separator_set.items():
+    for id, seps in separator_set.items():
        print(f"{id.v}: {seps}")
 
     for road_id, road in self.roads.items():
@@ -544,7 +394,7 @@ class RoadNetwork:
           break
       if not found_predecessors:
         max_sep_id += 1
-        self.separator_set[SeparatorID(max_sep_id)] = set([(road, "start")])
+        separator_set[SeparatorID(max_sep_id)] = set([(road, "start")])
     for road_id, road in self.roads.items():
       found_successors = False
       for lane_id, lane in road.lanes.items():
@@ -553,15 +403,15 @@ class RoadNetwork:
           break
       if not found_successors:
         max_sep_id += 1
-        self.separator_set[SeparatorID(max_sep_id)] = set([(road, "end")])
-        
-    for id, seps in self.separator_set.items():
-       print(f"{id.v}: {seps}")
+        separator_set[SeparatorID(max_sep_id)] = set([(road, "end")])
 
-    self.debug_pts = []
+    for id, seps in separator_set.items():
+       print(f"{id.v}: {seps}")
+    return separator_set
+
+  def select_road_direction_at_terminals(self, separator_set):
     sep_set = {}
-    # select road direction at terminals
-    for sep_set_id, seps in self.separator_set.items():
+    for sep_set_id, seps in separator_set.items():
       start_count = 0
       end_count = 0
       road_with_start_point = None
@@ -573,12 +423,12 @@ class RoadNetwork:
         else:
           end_count += 1
           road_with_end_point = sep[0]
-      # select road direction from road merged to or split from
+      # Select road direction from road merged to or split from
       if start_count > 1 and end_count == 1:
         heading = road_with_end_point.heading[1]
       elif start_count == 1 and end_count > 1:
         heading = road_with_start_point.heading[0]
-      else: # or select direction of the most straight road
+      else: # Or select direction of the most straight road
         min_curvature = 999999
         for road, start_or_end in seps:
           r = road.ref_line
@@ -596,11 +446,12 @@ class RoadNetwork:
         #   print("new road end heading: ", math.degrees(heading))
         road.heading[idx] = heading
       sep_set[sep_set_id] = [heading, None]
+    return sep_set
 
-    # determine separation line base point
-    for sep_set_id, seps in self.separator_set.items():
+  def determine_separation_line_base_point(self, separator_set, sep_set):
+    for sep_set_id, seps in separator_set.items():
       base_pts = []
-      # # find points at lane tips with zero lane width
+      # # Find points at lane tips with zero lane width
       # for idx, (road, start_or_end) in enumerate(seps):
       #   pt_idx = 0 if start_or_end == "start" else -1
       #   for lane_id, lane in road.lanes.items():
@@ -610,12 +461,12 @@ class RoadNetwork:
       #       base_pts.append((lane.left_bnd[0][pt_idx], lane.left_bnd[1][pt_idx]))
 
       if len(seps) == 1:
-        # just use terminal point of reference line for roads with no predecessors/successors
+        # Just use terminal point of reference line for roads with no predecessors/successors
         road, start_or_end = first(seps)
         pt_idx = 0 if start_or_end == "start" else -1
         base_pts += [(road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])]
       else:
-        # find shared start/end points among roads
+        # Find shared start/end points among roads
         base_pts += self.find_common_lane_bnd_pt(seps, "start")
         base_pts += self.find_common_lane_bnd_pt(seps, "end")
 
@@ -630,9 +481,9 @@ class RoadNetwork:
         base_pts.append(((base_pt1[0]+base_pt2[0])/2, (base_pt1[1]+base_pt2[1])/2))
 
       if len(base_pts) != 1:
-        # for overlapped mergming lanes,
-        # we usually find 2 or more shared start/end points among roads
-        # draw the separation line along the first 2 points.
+        # For overlapped merging lanes,
+        # we usually find 2 or more shared start/end points among roads.
+        # Draw the separation line along the first 2 points.
         heading = math.atan2(base_pts[0][1]-base_pts[1][1], base_pts[0][0]-base_pts[1][0])
         heading += math.pi/2
         for road, start_or_end in seps:
@@ -654,15 +505,103 @@ class RoadNetwork:
       print("\t", base_pts)
       print("==========================================")
 
-    # tweak terminals of lane boundaries
-    self.prepare_for_bnd_recut(sep_set)
-    self.recut_bnd(sep_set)
-  
-    # update lane poly after boundaries updated
-    for road_id, road in self.roads.items():
-      for lane_id, lane in road.lanes.items():
-        lane.update_poly()
+  def prepare_for_bnd_recut(self, separator_set, sep_set):
+    roads_to_recut_bnd = {}
+    for sep_set_id, seps in separator_set.items():
+      heading, base_pts = sep_set[sep_set_id]      
+      if len(base_pts) != 1:
+        continue
+      for road, start_or_end in seps:
+        roads_to_recut_bnd[road] = (True, True)
+    # for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
+    #   for lane_id, lane in road.lanes.items():
+    #     if len(lane.predecessors) > 1:
+    #       cut_start = False
+    #       break
+    #   for lane_id, lane in road.lanes.items():
+    #     if len(lane.successors) > 1:
+    #       cut_end = False
+    #       break
+    #   roads_to_recut_bnd[road] = (cut_start, cut_end)
 
+    # Extend lane boundaries
+    for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
+      for lane_id, lane in road.lanes.items():
+        left_bnd = deque(xxyy2xyxy(lane.left_bnd))
+        right_bnd = deque(xxyy2xyxy(lane.right_bnd))
+        if cut_start:
+          if len(lane.predecessors) != 0:
+             # With boundaries of predecessor lane
+            prev_lane = first(lane.predecessors)
+            left_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.left_bnd)))
+            right_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.right_bnd)))
+          else:
+            if len(lane.left_neighbors) and len(first(lane.left_neighbors).predecessors) > 0:
+              # With the right boundary of left neighbor's predecessor lane
+              neighbor_prev_lane = first(first(lane.left_neighbors).predecessors)
+              left_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.right_bnd)))
+            else:
+              # By extrapolation
+              self.extend_bnd_by_extrapolation(left_bnd, "start")
+            if len(lane.right_neighbors) and len(first(lane.right_neighbors).predecessors) > 0:
+              # with the left boundary of right neighbor's predecessor lane
+              neighbor_prev_lane = first(first(lane.right_neighbors).predecessors)
+              right_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.left_bnd)))
+            else:
+              # By extrapolation
+              self.extend_bnd_by_extrapolation(right_bnd, "start")
+        if cut_end:
+          if len(lane.successors) != 0:
+             # With boundaries of predecessor lane
+            next_lane = first(lane.successors)
+            left_bnd.extend(xxyy2xyxy(next_lane.left_bnd))
+            right_bnd.extend(xxyy2xyxy(next_lane.right_bnd))
+          else:
+            if len(lane.left_neighbors) and len(first(lane.left_neighbors).successors) > 0:
+              # With right boundary of left neighbor's successor lane
+              neighbor_next_lane = first(first(lane.left_neighbors).successors)
+              left_bnd.extend(xxyy2xyxy(neighbor_next_lane.right_bnd))
+            else:
+              # By extrapolation
+              self.extend_bnd_by_extrapolation(left_bnd, "end")
+            if len(lane.right_neighbors) and len(first(lane.right_neighbors).successors) > 0:
+              # With left boundary of right neighbor's successor lane
+              neighbor_next_lane = first(first(lane.right_neighbors).successors)
+              right_bnd.extend(xxyy2xyxy(neighbor_next_lane.left_bnd))
+            else:
+              # By extrapolation
+              self.extend_bnd_by_extrapolation(right_bnd, "end")
+        lane.left_bnd_to_recut = left_bnd
+        lane.right_bnd_to_recut = right_bnd
+
+  def recut_bnd(self, separator_set, sep_set):
+    for sep_set_id, seps in separator_set.items():
+      heading, base_pts = sep_set[sep_set_id]
+      if len(base_pts) == 1:
+        for road, start_or_end in seps:
+          for lane_id, lane in road.lanes.items():
+            if len(self.debug_pts) == 0:
+              self.debug_pts = lane.recut_bnd(base_pts[0], heading, start_or_end)
+    # Move results from temp var to the final lane.left_bnd/right_bnd
+    for sep_set_id, seps in separator_set.items():
+      heading, base_pts = sep_set[sep_set_id]
+      if len(base_pts) == 1:
+        for road, start_or_end in seps:
+          for lane_id, lane in road.lanes.items():
+            if len(lane.left_bnd_to_recut) > 0:
+              lane.left_bnd = xyxy2xxyy(lane.left_bnd_to_recut)
+              lane.left_bnd_to_recut = []
+            if len(lane.right_bnd_to_recut) > 0:
+              lane.right_bnd = xyxy2xxyy(lane.right_bnd_to_recut)
+              lane.right_bnd_to_recut = []
+
+  def refine_lane_terminals(self):
+    # Tweak terminals of lane boundaries
+    separator_set = self.find_lane_terminals_shared_same_directions()
+    sep_set = self.select_road_direction_at_terminals(separator_set)
+    self.determine_separation_line_base_point(separator_set, sep_set)
+    self.prepare_for_bnd_recut(separator_set, sep_set)
+    self.recut_bnd(separator_set, sep_set)
 
   def build_lane_info(self):
     for road_id, road in self.roads.items():
@@ -673,9 +612,15 @@ class RoadNetwork:
       road.build_ref_line()
       road.resample_ref_line(5.0)
       road.compute_ref_line_bc_derivative()
-    #return
+    
     self.refine_lane_terminals()
-    # rebuild reference line with refined lane boundaries
+
+    # Update lane poly after boundaries updated
+    for road_id, road in self.roads.items():
+      for lane_id, lane in road.lanes.items():
+        lane.update_poly()
+
+    # Rebuild reference line with refined lane boundaries
     for road_id, road in self.roads.items():
       road.backup_ref_line()
       road.build_ref_line()
@@ -747,21 +692,8 @@ def on_pick(event):
   fig.canvas.flush_events()
 
 
-x_min = 1e30
-x_max = -1e30
-y_min = 1e30
-y_max = -1e30
-def update_world_box(xx, yy):
-  global x_min, x_max, y_min, y_max
-  x_min = min(x_min, min(xx))
-  x_max = max(x_max, max(xx))
-  y_min = min(y_min, min(yy))
-  y_max = max(y_max, max(yy))
-
-
 def run(focused_set2=set()):
   global fig, polys, focused_set, my_map
-  global x_min, x_max, y_min, y_max
   focused_set = focused_set2
   fig, ax = plt.subplots()
   pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
@@ -788,7 +720,7 @@ def run(focused_set2=set()):
   my_map.build_lane_info()
   my_map.debug_print()
 
-  # draw lane polygon
+  # Draw lane polygon, and boundary on the selected lane
   color_idx = 0
   for road_id, road in my_map.roads.items():
     for lane_subid, lane in road.lanes.items():
@@ -800,6 +732,7 @@ def run(focused_set2=set()):
       polys.append(poly)
 
       if 0:
+        # Draw extend boundaries.
         left_xx = [x for x,y in lane.left_bnd_to_recut]
         left_yy = [y for x,y in lane.left_bnd_to_recut]
         right_xx = [x for x,y in lane.right_bnd_to_recut]
@@ -814,34 +747,22 @@ def run(focused_set2=set()):
       p.my_color2 = (c[0], c[1], c[2], 0.6)
 
       polys2.append(sgeom.Polygon(lane.poly))
-      update_world_box(*xxyy)
+      WorldBox.update(*xxyy)
 
-  # for road_id, road in my_map.roads.items():
-  #   if road_id not in ('557024172,0,0,42', '557024172,0,0,66', '557024172,0,0,36', '557024172,0,0,16'):
-  #     continue
-  #   for lane_subid, lane in road.lanes.items():
-  #     if lane_subid not in (1, 3, 5):
-  #     #if lane_subid not in (0, 2, 4):
-  #       continue
-  #     #plt.plot(lane.left_bnd[0], lane.left_bnd[1], "*")
-  #     plt.plot(lane.right_bnd[0], lane.right_bnd[1], "*")
-
-  # draw reference lines
+  # Draw reference lines
   for road_id, road in my_map.roads.items():
     # if road_id not in ("557024172,0,0,36", "557024172,0,0,53"):
     #   continue
     
     plt.plot(road.ref_line[0], road.ref_line[1], "-*")
     #plt.plot(road.old_ref_line[0], road.old_ref_line[1], "-x")
-    #bc_pts = xodr_exporter.compute_bc_derivative(road)
-    #plt.plot([x for x,y in bc_pts], [y for x,y in bc_pts], "x")
 
-  # draw debug points
+  # Draw debug points/lines
   for polyline in my_map.debug_pts:
     xyxy = xyxy2xxyy(polyline)
     plt.plot(xyxy[0], xyxy[1], "-o", markersize=10)
 
-  # draw center lines
+  # Draw center lines
   for f in g["features"]:
     if f["properties"]["layer"] == "center_line":
       #print(f["properties"]["id"])
@@ -859,25 +780,11 @@ def run(focused_set2=set()):
         continue
       plt.plot(xx, yy, "--")
 
-  # keep aspect ratio to 1:1 in meters
+  # Keep aspect ratio to 1:1 in meters
   if os.name == 'nt':
-    w, h = 1000, 500
+    WorldBox.update_fig_range(ax, 1000, 500)
   else:
-    w, h = 1600, 800
-  dx = x_max - x_min
-  dy = y_max - y_min
-  if dx/dy > w/h:
-    dy = dx/w*h
-    y = (y_max + y_min) / 2
-    y_min = y - dy / 2
-    y_max = y + dy / 2
-  else:
-    dx = dy*w/h
-    x = (x_min + x_max) / 2
-    x_min = x - dx / 2
-    x_max = x + dx / 2
-  ax.set_xlim((x_min, x_max))
-  ax.set_ylim((y_min, y_max))
+    WorldBox.update_fig_range(ax, 1600, 800)
 
   # handle lane picking, selection and keyborad events
   fig.canvas.mpl_connect('pick_event', on_pick)
@@ -891,9 +798,6 @@ def run(focused_set2=set()):
         toggle_selector.RS.update()
     plt.connect('draw_event', update_selected_region)
   plt.connect('key_press_event', toggle_selector)
-
-  mng = plt.get_current_fig_manager()
-  mng.resize(w, h)
 
   plt.show()
   return focused_set
