@@ -35,6 +35,13 @@ class SeparatorID:
   def __init__(self, id):
     self.v = id
 
+class Separator:
+  def __init__(self, id):
+    self.id = id
+    self.terminals = set()
+    self.heading = None
+    self.base_pts = []
+
 class Lane:
   def __init__(self, full_id, id, poly):
     self.road_id = None
@@ -430,12 +437,10 @@ class RoadNetwork:
     for sep, sep_id in separator_ids.items():
       max_sep_id = max(max_sep_id, sep_id.v)
       if sep_id not in separator_set:
-        separator_set[sep_id] = set()
-      separator_set[sep_id].add(sep)
+        separator_set[sep_id] = Separator(sep_id)
+      separator_set[sep_id].terminals.add(sep)
 
-    for id, seps in separator_set.items():
-       print(f"{id.v}: {seps}")
-
+    # Add dead-end/start to separation set
     for road_id, road in self.roads.items():
       found_predecessors = False
       for lane_id, lane in road.lanes.items():
@@ -444,7 +449,10 @@ class RoadNetwork:
           break
       if not found_predecessors:
         max_sep_id += 1
-        separator_set[SeparatorID(max_sep_id)] = set([(road, "start")])
+        new_sep_id = SeparatorID(max_sep_id)
+        new_sep = Separator(new_sep_id)
+        new_sep.terminals.add((road, "start"))
+        separator_set[new_sep_id] = new_sep
     for road_id, road in self.roads.items():
       found_successors = False
       for lane_id, lane in road.lanes.items():
@@ -453,26 +461,28 @@ class RoadNetwork:
           break
       if not found_successors:
         max_sep_id += 1
-        separator_set[SeparatorID(max_sep_id)] = set([(road, "end")])
+        new_sep_id = SeparatorID(max_sep_id)
+        new_sep = Separator(new_sep_id)
+        new_sep.terminals.add((road, "end"))
+        separator_set[new_sep_id] = new_sep
 
-    for id, seps in separator_set.items():
-       print(f"{id.v}: {seps}")
+    for id, sep in separator_set.items():
+       print(f"{id.v}: {sep.terminals}")
     return separator_set
 
-  def select_road_direction_at_terminals(self, separator_set):
-    sep_set = {}
-    for sep_set_id, seps in separator_set.items():
+  def select_road_direction_at_terminals(self, sep_set):
+    for sep_set_id, sep in sep_set.items():
       start_count = 0
       end_count = 0
       road_with_start_point = None
       road_with_end_point = None
-      for sep in seps:
-        if sep[1] == "start":
+      for road, start_or_end in sep.terminals:
+        if start_or_end == "start":
           start_count += 1
-          road_with_start_point = sep[0]
+          road_with_start_point = road
         else:
           end_count += 1
-          road_with_end_point = sep[0]
+          road_with_end_point = road
       # Select road direction from road merged to or split from
       if start_count > 1 and end_count == 1:
         heading = road_with_end_point.heading[1]
@@ -480,7 +490,7 @@ class RoadNetwork:
         heading = road_with_start_point.heading[0]
       else: # Or select direction of the most straight road
         min_curvature = 999999
-        for road, start_or_end in seps:
+        for road, start_or_end in sep.terminals:
           r = road.ref_line
           if start_or_end == "start":
             c = curvature(r[0][0:3], r[1][0:3])
@@ -489,17 +499,17 @@ class RoadNetwork:
           if c < min_curvature:
             c = min_curvature
             heading = road.heading[0 if start_or_end == "start" else 1]
-      for road, start_or_end in seps:
+      for road, start_or_end in sep.terminals:
         idx = 0 if start_or_end == "start" else 1
         # if road.id == "557024172,0,0,36" and start_or_end == "end":
         #   print("old road end heading: ", math.degrees(road.heading[idx]))
         #   print("new road end heading: ", math.degrees(heading))
         road.heading[idx] = heading
-      sep_set[sep_set_id] = [heading, None]
+      sep.heading = heading
     return sep_set
 
-  def determine_separation_line_base_point(self, separator_set, sep_set):
-    for sep_set_id, seps in separator_set.items():
+  def determine_separation_line_base_point(self, sep_set):
+    for sep_set_id, sep in sep_set.items():
       base_pts = []
       # # Find points at lane tips with zero lane width
       # for idx, (road, start_or_end) in enumerate(seps):
@@ -510,19 +520,19 @@ class RoadNetwork:
       #     if pt1_hash == pt2_hash:
       #       base_pts.append((lane.left_bnd[0][pt_idx], lane.left_bnd[1][pt_idx]))
 
-      if len(seps) == 1:
+      if len(sep.terminals) == 1:
         # Just use terminal point of reference line for roads with no predecessors/successors
-        road, start_or_end = first(seps)
+        road, start_or_end = first(sep.terminals)
         pt_idx = 0 if start_or_end == "start" else -1
         base_pts += [(road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])]
       else:
         # Find shared start/end points among roads
-        base_pts += self.find_common_lane_bnd_pt(seps, "start")
-        base_pts += self.find_common_lane_bnd_pt(seps, "end")
+        base_pts += self.find_common_lane_bnd_pt(sep.terminals, "start")
+        base_pts += self.find_common_lane_bnd_pt(sep.terminals, "end")
 
-      assert(len(base_pts) > 0 or len(seps) == 2)
+      assert(len(base_pts) > 0 or len(sep.terminals) == 2)
       if len(base_pts) == 0:
-        for idx, (road, start_or_end) in enumerate(seps):
+        for idx, (road, start_or_end) in enumerate(sep.terminals):
           pt_idx = 0 if start_or_end == "start" else -1
           if idx == 0:
             base_pt1 = (road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])
@@ -536,32 +546,31 @@ class RoadNetwork:
         # Draw the separation line along the first 2 points.
         heading = math.atan2(base_pts[0][1]-base_pts[1][1], base_pts[0][0]-base_pts[1][0])
         heading += math.pi/2
-        for road, start_or_end in seps:
+        for road, start_or_end in sep.terimals:
           if start_or_end == "start":
             heading2 = math.atan2(road.ref_line[1][1]-road.ref_line[1][0], road.ref_line[0][1]-road.ref_line[0][0])
             if math.cos(heading)*math.cos(heading2)+math.sin(heading)*math.sin(heading) < 0.5:
              heading += math.pi
-            for road2, start_or_end in seps:
+            for road2, start_or_end in sep.terimals:
               if start_or_end == "start":
                 road2.heading[0] = heading
               else:
                 road2.heading[1] = heading
-            sep_set[sep_set_id] = [heading, [base_pts[0]]]
+            sep.heading = heading
+            sep.base_pts = [base_pts[0]]
             break
       else:
-        sep_set[sep_set_id][1] = base_pts
-      #self.debug_pts += base_pts
-      print(f"{sep_set_id.v}: {seps}")
+        sep.base_pts = base_pts
+      print(f"{sep_set_id.v}: {sep.terminals}")
       print("\t", base_pts)
       print("==========================================")
 
-  def prepare_for_bnd_recut(self, separator_set, sep_set):
+  def prepare_for_bnd_recut(self, sep_set):
     roads_to_recut_bnd = {}
-    for sep_set_id, seps in separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]      
-      if len(base_pts) != 1:
+    for sep_set_id, sep in sep_set.items():    
+      if len(sep.base_pts) != 1:
         continue
-      for road, start_or_end in seps:
+      for road, start_or_end in sep.terminals:
         roads_to_recut_bnd[road] = (True, True)
     # for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
     #   for lane_id, lane in road.lanes.items():
@@ -624,34 +633,45 @@ class RoadNetwork:
         lane.left_bnd_to_recut = left_bnd
         lane.right_bnd_to_recut = right_bnd
 
-  def recut_bnd(self, separator_set, sep_set):
-    for sep_set_id, seps in separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]
-      if len(base_pts) == 1:
-        for road, start_or_end in seps:
+  def recut_bnd(self, sep_set):
+    # Cut boundaries with the separation line
+    updated_lanes = set()
+    for sep_set_id, sep in sep_set.items():
+      if len(sep.base_pts) == 1:
+        for road, start_or_end in sep.terminals:
           for lane_id, lane in road.lanes.items():
-            if len(self.debug_pts) == 0:
-              self.debug_pts = lane.recut_bnd(base_pts[0], heading, start_or_end)
+            if len(self.debug_pts) != 0:
+              continue  # skip remaining lanes on any errors
+            self.debug_pts = lane.recut_bnd(sep.base_pts[0], sep.heading, start_or_end)
+            updated_lanes.add(lane)
+
     # Move results from temp var to the final lane.left_bnd/right_bnd
-    for sep_set_id, seps in separator_set.items():
-      heading, base_pts = sep_set[sep_set_id]
-      if len(base_pts) == 1:
-        for road, start_or_end in seps:
-          for lane_id, lane in road.lanes.items():
-            if len(lane.left_bnd_to_recut) > 0:
-              lane.left_bnd = xyxy2xxyy(lane.left_bnd_to_recut)
-              lane.left_bnd_to_recut = []
-            if len(lane.right_bnd_to_recut) > 0:
-              lane.right_bnd = xyxy2xxyy(lane.right_bnd_to_recut)
-              lane.right_bnd_to_recut = []
+    for lane in updated_lanes:
+      lane.left_bnd = xyxy2xxyy(lane.left_bnd_to_recut)
+      lane.right_bnd = xyxy2xxyy(lane.right_bnd_to_recut)
+      lane.left_bnd_to_recut = []
+      lane.right_bnd_to_recut = []
 
   def refine_lane_terminals(self):
     # Tweak terminals of lane boundaries
-    separator_set = self.find_lane_terminals_shared_same_directions()
-    sep_set = self.select_road_direction_at_terminals(separator_set)
-    self.determine_separation_line_base_point(separator_set, sep_set)
-    self.prepare_for_bnd_recut(separator_set, sep_set)
-    self.recut_bnd(separator_set, sep_set)
+    sep_set = self.find_lane_terminals_shared_same_directions()
+    # sep_set: {
+    #   sep_id_a:(
+    #         heading,
+    #         base_pts,
+    #         {
+    #           (road_a, "end"),
+    #           (road_b, "start"), ...
+    #         }
+    #   )
+    #   sep_id_b:(...),
+    #   ...
+    # }
+    self.select_road_direction_at_terminals(sep_set)
+    self.determine_separation_line_base_point(sep_set)
+    self.prepare_for_bnd_recut(sep_set)
+    self.recut_bnd(sep_set)
+    return sep_set
 
   def build_lane_info(self):
     for road_id, road in self.roads.items():
@@ -665,7 +685,8 @@ class RoadNetwork:
       road.resample_ref_line(5.0)
       road.compute_ref_line_bc_derivative()
     
-    self.refine_lane_terminals()
+    sep_set = self.refine_lane_terminals()
+    #self.build_road_connections(sep_set)
 
     # Update lane poly after boundaries updated
     for road_id, road in self.roads.items():
