@@ -47,14 +47,21 @@ class Lane:
     self.road_id = None
     self.full_id = full_id
     self.id = id
+    self.xodr = None
 
     base_x = -257882.086764
     base_y = 49751.229238
     self.poly = [(x-base_x, y-base_y) for x,y in poly]
+    xx, yy = xyxy2xxyy(self.poly)
 
     # Split the lane polygon into two boundaries
-    self.left_bnd = []  # ([x1,x2,...], [y1,y2,...])
-    self.right_bnd = []
+    for idx, pt in enumerate(poly):
+      if pt[0] == 1234.0 and pt[1] == 4567.0:
+        break
+    self.left_bnd = (xx[:idx], yy[:idx])
+    self.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
+    self.update_poly()
+    
     self.left_bnd_to_recut = []  # [(x1,y1),(x2,y2),...])
     self.right_bnd_to_recut = []
 
@@ -67,7 +74,7 @@ class Lane:
     self.growning = False
 
   def recut_bnd(self, base_pt, heading, start_or_end):
-    d = 20.0
+    d = 60.0
     heading += math.pi / 2
     separator_line = [(base_pt[0] + d * math.cos(heading), base_pt[1] + d * math.sin(heading))]
     separator_line.append((base_pt[0] - d * math.cos(heading), base_pt[1] - d * math.sin(heading)))
@@ -83,6 +90,8 @@ class Lane:
     left1_pts = [result.geoms[0].xy[0], result.geoms[0].xy[1]]
     left2_pts = [result.geoms[1].xy[0], result.geoms[1].xy[1]]
     left_sep_pt = left_bnd_polyline.intersection(separator_polyline)
+    if not isinstance(left_sep_pt, Point):
+      return [self.left_bnd_to_recut, separator_line]
     assert(isinstance(left_sep_pt, Point))
 
     if start_or_end == "start":
@@ -130,9 +139,11 @@ class Lane:
 class Road:
   def __init__(self, id):
     self.id = id
+    self.xodr = None
     self.lanes = OrderedDict()
     self.old_ref_line = None
-    self.ref_line = None
+    self.ref_line = None  # (xx, yy)
+    self.linkage = [None, None] # [(road_a, "end"), (road_b, "start")]
 
   def add_lane(self, lane):
     lane.road_id = self.id
@@ -225,11 +236,9 @@ class Road:
     return f"Road[{self.id}]"
 
   def debug_print(self):
-    print(f"Road[{self.id}]")
-    # print(f"\theading: {math.degrees(self.heading[0])}\t{math.degrees(self.heading[1])}")
-    # h1 = math.atan2(self.ref_line[1][1]-self.ref_line[1][0], self.ref_line[0][1]-self.ref_line[0][0])
-    # h2 = math.atan2(self.ref_line[1][-1]-self.ref_line[1][-2], self.ref_line[0][-1]-self.ref_line[0][-2])
-    # print(f"\theading2:{math.degrees(h1)}\t{math.degrees(h2)}")
+    from_road = f", from Road[{self.linkage[0][0].id}] {self.linkage[0][1]}" if self.linkage[0] is not None else ""
+    to_road = f", to Road[{self.linkage[1][0].id}] {self.linkage[1][1]}" if self.linkage[1] is not None else ""
+    print(f"Road[{self.id}]{from_road}{to_road}")
 
     for lane_id, lane in self.lanes.items():
       lane.debug_print("\t")
@@ -270,7 +279,7 @@ class RoadNetwork:
     assert pt_str in self.pt2lane
     return self.pt2lane[pt_str]
 
-  def split_lane_poly(self):
+  def update_pt2lane_hash_table(self):
     self.pt2lane = {}
 
     # Build hash table for boundary points
@@ -282,35 +291,6 @@ class RoadNetwork:
             self.pt2lane[pt_str] = set()
           self.pt2lane[pt_str].add(lane)
 
-    for road_id, road in self.roads.items():
-      for lane_id, lane in road.lanes.items():
-        xx, yy = xyxy2xxyy(lane.poly)
-
-        # Split poly ring on the point shared by other road
-        split_pt_indices = []
-        for idx, pt in enumerate(lane.poly):
-          if idx == 0 or idx + 2 >= len(lane.poly):
-            continue
-          for lane2 in self.pt_lane_set(pt[0], pt[1]):
-            if lane2.road_id != road_id:
-              split_pt_indices.append(idx)
-              break
-
-        # Split poly ring at the position where direction got reversed.
-        if len(split_pt_indices) != 2:
-          for idx in range(1, len(xx)-1):
-            dot = (xx[idx-1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx+1]-yy[idx])
-            d2a = (xx[idx-1]-xx[idx])*(xx[idx-1]-xx[idx]) + (yy[idx-1]-yy[idx])*(yy[idx-1]-yy[idx])
-            d2b = (xx[idx+1]-xx[idx])*(xx[idx+1]-xx[idx]) + (yy[idx+1]-yy[idx])*(yy[idx+1]-yy[idx])
-            dot /= math.sqrt(d2a*d2b+0.00000000001)
-            if abs(dot) < 0.2:
-              split_pt_indices = [idx, idx+1]
-              break
-
-        assert(len(split_pt_indices) == 2)
-        idx = split_pt_indices[0]
-        lane.left_bnd = (xx[:idx+1], yy[:idx+1])
-        lane.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
 
   def compute_overlapped_lanes(self, lane):
     # Spliting
@@ -546,12 +526,12 @@ class RoadNetwork:
         # Draw the separation line along the first 2 points.
         heading = math.atan2(base_pts[0][1]-base_pts[1][1], base_pts[0][0]-base_pts[1][0])
         heading += math.pi/2
-        for road, start_or_end in sep.terimals:
+        for road, start_or_end in sep.terminals:
           if start_or_end == "start":
             heading2 = math.atan2(road.ref_line[1][1]-road.ref_line[1][0], road.ref_line[0][1]-road.ref_line[0][0])
             if math.cos(heading)*math.cos(heading2)+math.sin(heading)*math.sin(heading) < 0.5:
              heading += math.pi
-            for road2, start_or_end in sep.terimals:
+            for road2, start_or_end in sep.terminals:
               if start_or_end == "start":
                 road2.heading[0] = heading
               else:
@@ -673,11 +653,49 @@ class RoadNetwork:
     self.recut_bnd(sep_set)
     return sep_set
 
-  def build_lane_info(self):
+  def build_road_connections(self, sep_set):
+    for sep_set_id, sep in sep_set.items():
+      if len(sep.terminals) == 2:
+        (road_a, start_or_end_a), (road_b, start_or_end_b) = list(sep.terminals)
+        if start_or_end_a != start_or_end_b:
+          pt_a_idx = 0 if start_or_end_a == "start" else -1
+          pt_b_idx = 0 if start_or_end_b == "start" else -1
+          a_hash = pt_hash(road_a.ref_line[0][pt_a_idx], road_a.ref_line[1][pt_a_idx])
+          b_hash = pt_hash(road_b.ref_line[0][pt_b_idx], road_b.ref_line[1][pt_b_idx])
+          #if a_hash == b_hash:
+          road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
+          road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
+          print(f"Link Road [{road_a.id}] and Road [{road_b.id}]")
+      elif len(sep.terminals) > 2:
+        terminals = list(sep.terminals)
+        for idx_i in range(len(terminals)):
+          road_a, start_or_end_a = terminals[idx_i]
+          for idx_j in range(idx_i+1, len(terminals)):
+            road_b, start_or_end_b = terminals[idx_j]
+            if start_or_end_a == start_or_end_b:
+              continue
+            pt_a_idx = 0 if start_or_end_a == "start" else -1
+            pt_b_idx = 0 if start_or_end_b == "start" else -1
+            if road_a.linkage[pt_a_idx] is None:
+              road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
+            else:
+              road_a.linkage[pt_a_idx] = (road_b, "junction")
+            if road_a.linkage[pt_b_idx] is None:
+              road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
+            else:
+              road_b.linkage[pt_b_idx] = (road_a, "junction")
+            
+
+  def build_lane_info(self, preview):
     for road_id, road in self.roads.items():
       road.sort_lanes()
-    self.split_lane_poly()
+    self.update_pt2lane_hash_table()
     self.compute_lane_topo()
+
+    #return
+    if preview:
+      return
+
     self.merge_overlapped_lanes()
 
     for road_id, road in self.roads.items():
@@ -686,7 +704,7 @@ class RoadNetwork:
       road.compute_ref_line_bc_derivative()
     
     sep_set = self.refine_lane_terminals()
-    #self.build_road_connections(sep_set)
+    self.build_road_connections(sep_set)
 
     # Update lane poly after boundaries updated
     for road_id, road in self.roads.items():
@@ -790,7 +808,7 @@ def run(focused_set2=set()):
       my_map.add_road(road_id)
     my_map.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
 
-  my_map.build_lane_info()
+  my_map.build_lane_info(preview=(len(focused_set) == 0))
   my_map.debug_print()
 
   # Draw lane polygon, and boundary on the selected lane
@@ -801,7 +819,7 @@ def run(focused_set2=set()):
 
       poly = Polygon(np.column_stack(xxyy), animated=True, color = (0,0,0,0))
       ax.add_patch(poly)
-      poly.lane_id = (road_id, lane_subid)
+      poly.lane_id = lane.full_id # (road_id, lane_subid)
       polys.append(poly)
 
       if 0:
@@ -826,8 +844,8 @@ def run(focused_set2=set()):
   for road_id, road in my_map.roads.items():
     # if road_id not in ("557024172,0,0,36", "557024172,0,0,53"):
     #   continue
-    
-    plt.plot(road.ref_line[0], road.ref_line[1], "-*")
+    if road.ref_line:
+      plt.plot(road.ref_line[0], road.ref_line[1], "-*")
     #plt.plot(road.old_ref_line[0], road.old_ref_line[1], "-x")
 
   # Draw debug points/lines
@@ -878,6 +896,9 @@ def run(focused_set2=set()):
 
 if __name__ == '__main__':
   #focused_set = run()
-  focused_set = {'557024172,0,0,52,2', '557024172,0,0,42,1', '557024172,0,0,42,3', '557024172,0,0,66,2', '557024172,0,0,52,0', '557024172,0,0,42,4', '557024172,0,0,16,1', '557024172,0,0,63,0', '557024172,0,0,16,4', '557024172,0,0,67,0', '557024172,0,0,53,2', '557024172,0,0,52,3', '557024172,0,0,67,5', '557024172,0,0,66,4', '557024172,0,0,67,4', '557024172,0,0,63,2', '557024172,0,0,42,2', '557024172,0,0,66,5', '557024172,0,0,53,1', '557024172,0,0,42,0', '557024172,0,0,16,0', '557024172,0,0,17,0', '557024172,0,0,67,1', '557024172,0,0,66,1', '557024172,0,0,17,3', '557024172,0,0,17,2', '557024172,0,0,52,1', '557024172,0,0,37,1', '557024172,0,0,63,4', '557024172,0,0,53,0', '557024172,0,0,53,3', '557024172,0,0,16,2', '557024172,0,0,67,3', '557024172,0,0,36,1', '557024172,0,0,66,3', '557024172,0,0,63,1', '557024172,0,0,16,3', '557024172,0,0,63,3', '557024172,0,0,17,1', '557024172,0,0,67,2', '557024172,0,0,37,0', '557024172,0,0,66,0', '557024172,0,0,36,2', '557024172,0,0,36,0', '557024172,0,0,63,5'}
+  #focused_set = {'557024172,0,0,52,2', '557024172,0,0,42,1', '557024172,0,0,42,3', '557024172,0,0,66,2', '557024172,0,0,52,0', '557024172,0,0,42,4', '557024172,0,0,16,1', '557024172,0,0,63,0', '557024172,0,0,16,4', '557024172,0,0,67,0', '557024172,0,0,53,2', '557024172,0,0,52,3', '557024172,0,0,67,5', '557024172,0,0,66,4', '557024172,0,0,67,4', '557024172,0,0,63,2', '557024172,0,0,42,2', '557024172,0,0,66,5', '557024172,0,0,53,1', '557024172,0,0,42,0', '557024172,0,0,16,0', '557024172,0,0,17,0', '557024172,0,0,67,1', '557024172,0,0,66,1', '557024172,0,0,17,3', '557024172,0,0,17,2', '557024172,0,0,52,1', '557024172,0,0,37,1', '557024172,0,0,63,4', '557024172,0,0,53,0', '557024172,0,0,53,3', '557024172,0,0,16,2', '557024172,0,0,67,3', '557024172,0,0,36,1', '557024172,0,0,66,3', '557024172,0,0,63,1', '557024172,0,0,16,3', '557024172,0,0,63,3', '557024172,0,0,17,1', '557024172,0,0,67,2', '557024172,0,0,37,0', '557024172,0,0,66,0', '557024172,0,0,36,2', '557024172,0,0,36,0', '557024172,0,0,63,5'}
+  #focused_set = {'557024173,0,0,13,0', '557024173,0,0,17,3', '557024172,0,0,32,2', '557024173,0,0,14,1', '557024173,0,0,15,0', '557024172,0,0,32,1', '557024173,0,0,12,3', '557024173,0,0,12,1', '557024173,0,0,17,4', '557024173,0,0,17,5', '557024172,0,0,21,3', '557024172,0,0,21,0', '557024172,0,0,21,4', '557024173,0,0,12,0', '557024173,0,0,15,2', '557024173,0,0,12,4', '557024173,0,0,12,2', '557024173,0,0,15,4', '557024173,0,0,17,1', '557024173,0,0,13,1', '557024173,0,0,15,5', '557024173,0,0,11,3', '557024173,0,0,11,0', '557024172,0,0,32,0', '557024173,0,0,11,2', '557024173,0,0,17,2', '557024173,0,0,13,2', '557024173,0,0,15,1', '557024173,0,0,17,0', '557024172,0,0,21,2', '557024173,0,0,14,0', '557024172,0,0,21,1', '557024173,0,0,11,1', '557024173,0,0,15,3'}
+  focused_set = {'557024172,0,0,19,3', '557024172,0,0,19,1', '557024173,0,0,2,3', '557024173,0,0,4,1', '557024173,0,0,7,3', '557024172,0,0,46,2', '557024172,0,0,12,3', '557024172,0,0,43,2', '557024173,0,0,5,0', '557024173,0,0,2,1', '557024173,0,0,3,4', '557024172,0,0,20,3', '557024172,0,0,74,1', '557024173,0,0,6,3', '557024172,0,0,20,2', '557024173,0,0,6,2', '557024173,0,0,2,0', '557024173,0,0,3,2', '557024173,0,0,8,3', '557024172,0,0,43,0', '557024172,0,0,20,4', '557024173,0,0,9,3', '557024173,0,0,2,2', '557024173,0,0,6,0', '557024173,0,0,8,0', '557024172,0,0,12,1', '557024172,0,0,20,1', '557024172,0,0,43,1', '557024172,0,0,49,0', '557024172,0,0,20,0', '557024172,0,0,74,0', '557024172,0,0,12,0', '557024173,0,0,8,2', '557024173,0,0,8,4', '557024173,0,0,7,4', '557024173,0,0,4,3', '557024173,0,0,5,2', '557024173,0,0,2,4', '557024172,0,0,19,2', '557024173,0,0,6,1', '557024173,0,0,9,1', '557024173,0,0,8,1', '557024172,0,0,46,1', '557024173,0,0,4,0', '557024173,0,0,7,0', '557024172,0,0,49,1', '557024173,0,0,3,0', '557024173,0,0,9,0', '557024172,0,0,19,0', '557024172,0,0,12,4', '557024173,0,0,8,5', '557024173,0,0,7,2', '557024172,0,0,44,0', '557024172,0,0,44,1', '557024172,0,0,12,2', '557024173,0,0,9,2', '557024172,0,0,46,0', '557024173,0,0,4,2', '557024173,0,0,3,3', '557024172,0,0,74,3', '557024172,0,0,74,4', '557024172,0,0,49,3', '557024173,0,0,7,1', '557024173,0,0,5,1', '557024173,0,0,8,6', '557024173,0,0,3,1', '557024173,0,0,7,5', '557024172,0,0,49,2', '557024172,0,0,74,2', '557024173,0,0,6,4'}
   if focused_set:
+    print(focused_set)
     run(focused_set)

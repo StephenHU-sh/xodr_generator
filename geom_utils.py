@@ -51,7 +51,10 @@ def curvature(x, y):
   return 4 * triangle_area / math.sqrt(a * b * c)
 
 def pt_hash(x, y):
-  return "%.2f,%.2f" % (x, y)
+  return "%.1f,%.1f" % (x, y)
+
+def is_almost_the_same_pt2(p1, p2):
+  return pt_hash(*p1) == pt_hash(*p2)
 
 def xxyy2xyxy(xxyy):
   return [(xxyy[0][idx], xxyy[1][idx]) for idx in range(len(xxyy[0]))]
