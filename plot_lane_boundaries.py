@@ -42,6 +42,11 @@ class Separator:
     self.heading = None
     self.base_pts = []
 
+    # for direct junctions
+    self.road_id = None
+    self.road_split_from = None
+    self.road_merged_to = None
+
 class Lane:
   def __init__(self, full_id, id, poly):
     self.road_id = None
@@ -135,15 +140,19 @@ class Lane:
     print(f"\tnext:{[lane.full_id for lane in self.successors]},", end="")
     print(f"\toverlapped:{[lane.full_id for lane in self.overlapped]},")
 
-
+# one-way street with only one lane section
 class Road:
   def __init__(self, id):
     self.id = id
+    self.short_id = int(id.split(",")[-1])
     self.xodr = None
     self.lanes = OrderedDict()
     self.old_ref_line = None
     self.ref_line = None  # (xx, yy)
-    self.linkage = [None, None] # [(road_a, "end"), (road_b, "start")]
+
+    # assume roads are connected in:
+    #   ... => (road_a_start, road_a_end) => (road_b_start, road_b_end) => ...
+    self.linkage = [None, None] # [(prev_road_a, "end"), (next_road_b, "start")]
 
   def add_lane(self, lane):
     lane.road_id = self.id
@@ -236,8 +245,18 @@ class Road:
     return f"Road[{self.id}]"
 
   def debug_print(self):
-    from_road = f", from Road[{self.linkage[0][0].id}] {self.linkage[0][1]}" if self.linkage[0] is not None else ""
-    to_road = f", to Road[{self.linkage[1][0].id}] {self.linkage[1][1]}" if self.linkage[1] is not None else ""
+    from_road = ""
+    to_road = "" 
+    if self.linkage[0] is not None:
+      if isinstance(self.linkage[0][0], int):
+        from_road = f", from Junction[{self.linkage[0][0]}]"
+      else:
+        from_road = f", from Road[{self.linkage[0][0].id}] {self.linkage[0][1]}"
+    if self.linkage[1] is not None:
+      if isinstance(self.linkage[1][0], int):
+        to_road = f", to Junction[{self.linkage[1][0]}]"
+      else:
+        to_road = f", to Road[{self.linkage[1][0].id}] {self.linkage[1][1]}"
     print(f"Road[{self.id}]{from_road}{to_road}")
 
     for lane_id, lane in self.lanes.items():
@@ -465,8 +484,12 @@ class RoadNetwork:
           road_with_end_point = road
       # Select road direction from road merged to or split from
       if start_count > 1 and end_count == 1:
+        sep.road_split_from = road_with_end_point
+        sep.road_id = road_with_end_point.short_id
         heading = road_with_end_point.heading[1]
       elif start_count == 1 and end_count > 1:
+        sep.road_merged_to = road_with_start_point
+        sep.road_id = road_with_start_point.short_id
         heading = road_with_start_point.heading[0]
       else: # Or select direction of the most straight road
         min_curvature = 999999
@@ -667,6 +690,7 @@ class RoadNetwork:
           road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
           print(f"Link Road [{road_a.id}] and Road [{road_b.id}]")
       elif len(sep.terminals) > 2:
+        # For direct junctions
         terminals = list(sep.terminals)
         for idx_i in range(len(terminals)):
           road_a, start_or_end_a = terminals[idx_i]
@@ -676,15 +700,16 @@ class RoadNetwork:
               continue
             pt_a_idx = 0 if start_or_end_a == "start" else -1
             pt_b_idx = 0 if start_or_end_b == "start" else -1
-            if road_a.linkage[pt_a_idx] is None:
-              road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
-            else:
-              road_a.linkage[pt_a_idx] = (road_b, "junction")
-            if road_a.linkage[pt_b_idx] is None:
-              road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
-            else:
-              road_b.linkage[pt_b_idx] = (road_a, "junction")
-            
+            junction_id = sep.road_id # use road id as direct junction id
+            road_a.linkage[pt_a_idx] = (junction_id, "junction")
+            road_b.linkage[pt_b_idx] = (junction_id, "junction")
+
+  def save_direct_junction_info(self, sep_set):
+    self.direct_junction_info = []
+    for sep_set_id, sep in sep_set.items():
+      if sep.road_split_from is None and sep.road_merged_to is None:
+        continue
+      self.direct_junction_info.append(sep)
 
   def build_lane_info(self, preview):
     for road_id, road in self.roads.items():
@@ -705,6 +730,7 @@ class RoadNetwork:
     
     sep_set = self.refine_lane_terminals()
     self.build_road_connections(sep_set)
+    self.save_direct_junction_info(sep_set)
 
     # Update lane poly after boundaries updated
     for road_id, road in self.roads.items():

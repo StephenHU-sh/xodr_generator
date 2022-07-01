@@ -121,6 +121,9 @@ def export_road(odr, road, road_id):
         #     print(f"[{lane.full_id}] start ","    width: %.10f" % (width_a[0]))
 
         new_xodr_lane = xodr.Lane(lane_type=xodr.LaneType.driving, a=width_a, b=width_b, soffset=soffset)
+        if len(lanesection.rightlanes) > 0:
+            roadmark_dashed = xodr.RoadMark(xodr.RoadMarkType.broken, 0.01)
+            lanesection.rightlanes[-1].add_roadmark(roadmark_dashed)
         lanesection.add_right_lane(new_xodr_lane)
         lane.xodr = new_xodr_lane
 
@@ -144,19 +147,23 @@ def export_road(odr, road, road_id):
 
 def export_road_linkage(odr, road_a):
     road_set = set()
-    for linkage in (road_a.linkage[0], road_a.linkage[1]):
+    for idx, linkage in enumerate([road_a.linkage[0], road_a.linkage[1]]):
         if linkage is None:
             continue
         road_b, start_or_end_b = linkage
         road_set.add(road_b)
         if start_or_end_b == "end":
-            #road_b.xodr.add_successor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.end)
-            road_a.xodr.add_predecessor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.start)
+            #road_b.xodr.add_successor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.start)
+            road_a.xodr.add_predecessor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.end)
         elif start_or_end_b == "start":
-            #road_b.xodr.add_predecessor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.start)
-            road_a.xodr.add_successor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.end)
+            #road_b.xodr.add_predecessor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.end)
+            road_a.xodr.add_successor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.start)
         else: # "junction"
-            pass
+            junction_id = road_b
+            if idx == 0:
+                road_a.xodr.add_predecessor(xodr.ElementType.junction, junction_id)
+            else:
+                road_a.xodr.add_successor(xodr.ElementType.junction, junction_id)
 
     for lane_id, lane in road_a.lanes.items():
         for predecessor in lane.predecessors:
@@ -168,16 +175,49 @@ def export_road_linkage(odr, road_a):
             if to_junction or successor.road in road_set:
                 lane.xodr.add_link("successor", successor.xodr.lane_id)
 
+def export_direct_junction(odr, sep):
+    if sep.road_split_from is not None:
+        creator = xodr.DirectJunctionCreator(sep.road_split_from.short_id, f'direct_junction_{sep.road_split_from.id}')
+        for road, start_or_end in sep.terminals:
+            if road is sep.road_split_from:
+                continue
+            src_lane_ids = []
+            dst_lane_ids = []
+            for lane_id, lane in road.lanes.items():
+                for prev_lane in lane.predecessors:
+                    if prev_lane.road is sep.road_split_from:
+                        src_lane_ids.append(prev_lane.xodr.lane_id)
+                        dst_lane_ids.append(lane.xodr.lane_id)
+            creator.add_connection(prev_lane.road.xodr, lane.road.xodr, src_lane_ids, dst_lane_ids)
+        odr.add_junction_creator(creator)
+    if sep.road_merged_to is not None:
+        creator = xodr.DirectJunctionCreator(sep.road_merged_to.short_id, f'direct_junction_{sep.road_merged_to.id}')
+        for road, start_or_end in sep.terminals:
+            if road is sep.road_merged_to:
+                continue
+            src_lane_ids = []
+            dst_lane_ids = []
+            for lane_id, lane in road.lanes.items():
+                for next_lane in lane.successors:
+                    if next_lane.road is sep.road_merged_to:
+                        src_lane_ids.append(lane.xodr.lane_id)
+                        dst_lane_ids.append(next_lane.xodr.lane_id)
+            creator.add_connection(lane.road.xodr, next_lane.road.xodr, src_lane_ids, dst_lane_ids)
+        odr.add_junction_creator(creator)
+
 def export(my_map):
     odr = xodr.OpenDrive("myroad")
     for idx, (road_id, road) in enumerate(my_map.roads.items()):
         #if road_id != "557024172,0,0,66":
         #    continue
-        print(f"{idx}: \t{road_id}")
-        export_road(odr, road, idx)
-
+        print(f"{road.short_id}: \t{road_id}")
+        export_road(odr, road, road.short_id)
+        
     for road_id, road in my_map.roads.items():
         export_road_linkage(odr, road)
+
+    for sep in my_map.direct_junction_info:
+        export_direct_junction(odr, sep)
 
     # junction_id = 999
     # road_37 = my_map.roads["557024172,0,0,37"]
