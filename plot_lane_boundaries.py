@@ -23,13 +23,10 @@ from shapely.ops import split
 from shapely.geometry import LineString, Point, MultiPoint
 from collections import OrderedDict
 
-cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
 region = None
 fig = None
-polys = []
-focused_set = set()
-polys2 = []
 my_map = None
+cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 class SeparatorID:
   def __init__(self, id):
@@ -48,15 +45,21 @@ class Separator:
     self.road_merged_to = None
 
 class Lane:
+  base_x = 0
+  base_y = 0
+  
+  @classmethod
+  def set_base(cls, x, y):
+    cls.base_x = x
+    cls.base_y = y
+
   def __init__(self, full_id, id, poly):
     self.road_id = None
     self.full_id = full_id
     self.id = id
     self.xodr = None
 
-    base_x = -257882.086764
-    base_y = 49751.229238
-    self.poly = [(x-base_x, y-base_y) for x,y in poly]
+    self.poly = [(x-Lane.base_x, y-Lane.base_y) for x,y in poly]
     xx, yy = xyxy2xxyy(self.poly)
 
     # Split the lane polygon into two boundaries
@@ -286,9 +289,28 @@ def update_neighbor(lane1, lane2):
 
 
 class RoadNetwork:
-  def __init__(self):
+  def __init__(self, gjson, focused_set=set()):
     self.roads = OrderedDict()
     self.debug_pts = []
+
+    for f in gjson["features"]:
+      if f["properties"]["layer"] != "lane":
+        continue
+      if Lane.base_x == 0.0 and Lane.base_y == 0.0:
+        x, y, z = first(f["geometry"]["coordinates"])
+        Lane.set_base(x, y)
+
+      lane_id = f["properties"]["id"]
+      if focused_set and lane_id not in focused_set:
+        continue
+
+      pos = lane_id.rfind(",")
+      road_id = lane_id[:pos]
+      lane_subid = int(lane_id[pos+1:])
+
+      if road_id not in self.roads:
+        self.add_road(road_id)
+      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
 
   def add_road(self, road_id):
     self.roads[road_id] = Road(road_id)
@@ -299,9 +321,8 @@ class RoadNetwork:
     return self.pt2lane[pt_str]
 
   def update_pt2lane_hash_table(self):
-    self.pt2lane = {}
-
     # Build hash table for boundary points
+    self.pt2lane = {}
     for road_id, road in self.roads.items():
       for lane_id, lane in road.lanes.items():
         for pt in lane.poly:
@@ -309,7 +330,6 @@ class RoadNetwork:
           if pt_str not in self.pt2lane:
             self.pt2lane[pt_str] = set()
           self.pt2lane[pt_str].add(lane)
-
 
   def compute_overlapped_lanes(self, lane):
     # Spliting
@@ -688,7 +708,7 @@ class RoadNetwork:
           #if a_hash == b_hash:
           road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
           road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
-          print(f"Link Road [{road_a.id}] and Road [{road_b.id}]")
+          print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
       elif len(sep.terminals) > 2:
         # For direct junctions
         terminals = list(sep.terminals)
@@ -762,7 +782,6 @@ def get_polys_in_region():
       selected.add(poly)
   return selected
 
-
 def region_select_callback(eclick, erelease):
   'eclick and erelease are the press and release events'
   global region
@@ -775,7 +794,6 @@ def region_select_callback(eclick, erelease):
   #toggle_selector.RS.set_active(False)
   fig.canvas.draw()
   #fig.canvas.flush_events()
-
 
 def toggle_selector(event):
   if event.key == "enter":
@@ -799,7 +817,6 @@ def toggle_selector(event):
   elif event.key == "e":
     xodr_exporter.export(my_map)
 
-
 def on_pick(event):
   if event.mouseevent.key != 'control' or event.mouseevent.button != 1:
     return
@@ -808,36 +825,10 @@ def on_pick(event):
   fig.canvas.draw()
   fig.canvas.flush_events()
 
-
-def run(focused_set2=set()):
-  global fig, polys, focused_set, my_map
-  focused_set = focused_set2
-  fig, ax = plt.subplots()
-  pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
-  g = geojson.load(open("out.json"))
-
-  my_map = RoadNetwork()
-
-  for f in g["features"]:
-    if f["properties"]["layer"] != "lane":
-      continue
-    lane_id = f["properties"]["id"]
-
-    if focused_set and lane_id not in focused_set:
-      continue
-
-    pos = lane_id.rfind(",")
-    road_id = lane_id[:pos]
-    lane_subid = int(lane_id[pos+1:])
-
-    if road_id not in my_map.roads:
-      my_map.add_road(road_id)
-    my_map.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
-
-  my_map.build_lane_info(preview=(len(focused_set) == 0))
-  my_map.debug_print()
-
+def draw_lanes(my_map, ax):
   # Draw lane polygon, and boundary on the selected lane
+  polys = []
+  polys2 = []
   color_idx = 0
   for road_id, road in my_map.roads.items():
     for lane_subid, lane in road.lanes.items():
@@ -863,10 +854,11 @@ def run(focused_set2=set()):
       p.my_color = (c[0], c[1], c[2], 0.3)
       p.my_color2 = (c[0], c[1], c[2], 0.6)
 
-      polys2.append(sgeom.Polygon(lane.poly))
+      polys2.append(sgeom.Polygon(lane.poly)) # for filting centerlines
       WorldBox.update(*xxyy)
+  return polys, polys2
 
-  # Draw reference lines
+def draw_ref_lines(my_map):
   for road_id, road in my_map.roads.items():
     # if road_id not in ("557024172,0,0,36", "557024172,0,0,53"):
     #   continue
@@ -886,28 +878,60 @@ def run(focused_set2=set()):
 
     #plt.plot(road.old_ref_line[0], road.old_ref_line[1], "-x")
 
+def draw_debug_pts(my_map):
   # Draw debug points/lines
   for polyline in my_map.debug_pts:
     xyxy = xyxy2xxyy(polyline)
     plt.plot(xyxy[0], xyxy[1], "-o", markersize=10)
 
-  # Draw center lines
+def draw_centerlines(g, poly_filter):
   for f in g["features"]:
-    if f["properties"]["layer"] == "center_line":
-      #print(f["properties"]["id"])
-      xx = [x for x,y,z in f["geometry"]["coordinates"]]
-      yy = [y for x,y,z in f["geometry"]["coordinates"]]
-      pts = [[x,y] for x,y,z in f["geometry"]["coordinates"]]
-      pts2 = [sgeom.Point(pts[len(pts)//2])]
-      inside = False
-      for poly in polys2:
-        k = [poly.contains(pt) for pt in pts2]
-        if np.all(k):
-          inside = True
-          continue
-      if not inside:
+    if f["properties"]["layer"] != "center_line":
+      continue
+    xx = [x - Lane.base_x for x,y,z in f["geometry"]["coordinates"]]
+    yy = [y - Lane.base_y for x,y,z in f["geometry"]["coordinates"]]
+    pts = [(x - Lane.base_x, y - Lane.base_y) for x,y,z in f["geometry"]["coordinates"]]
+    pts2 = [sgeom.Point(pts[len(pts)//2])]
+    inside = False
+    for poly in poly_filter:
+      k = [poly.contains(pt) for pt in pts2]
+      if np.all(k):
+        inside = True
         continue
-      plt.plot(xx, yy, "--")
+    if not inside:
+      continue
+    plt.plot(xx, yy, "--")
+
+def register_event_handlers(ax):
+  # handle lane picking, selection and keyboard events
+  global fig, focused_set
+  fig.canvas.mpl_connect('pick_event', on_pick)
+  if not focused_set:
+    # drawtype is 'box' or 'line' or 'none'
+    toggle_selector.RS = RectangleSelector(ax, region_select_callback,
+      useblit=True, button=[1],  # don't use middle button
+      minspanx=5, minspany=5, spancoords='pixels', interactive=False)
+    def update_selected_region(event):
+      if toggle_selector.RS.active:
+        toggle_selector.RS.update()
+    plt.connect('draw_event', update_selected_region)
+  plt.connect('key_press_event', toggle_selector)
+  
+def run(focused_set2=set()):
+  global fig, polys, focused_set, my_map
+  focused_set = focused_set2
+  fig, ax = plt.subplots()
+  pan_zoom = fig_manipulator.PanAndZoom(fig, scale_factor=1.6)
+  g = geojson.load(open("out.json"))
+
+  my_map = RoadNetwork(g, focused_set)
+  my_map.build_lane_info(preview=(len(focused_set) == 0))
+  my_map.debug_print()
+
+  polys, poly_filters = draw_lanes(my_map, ax)
+  draw_ref_lines(my_map)
+  draw_debug_pts(my_map)
+  draw_centerlines(g, poly_filters)
 
   # Keep aspect ratio to 1:1 in meters
   if os.name == 'nt':
@@ -915,18 +939,7 @@ def run(focused_set2=set()):
   else:
     WorldBox.update_fig_range(ax, 1600, 800)
 
-  # handle lane picking, selection and keyborad events
-  fig.canvas.mpl_connect('pick_event', on_pick)
-  if not focused_set:
-    # drawtype is 'box' or 'line' or 'none'
-    toggle_selector.RS = RectangleSelector(ax, region_select_callback,
-      drawtype='box', useblit=True, button=[1],  # don't use middle button
-      minspanx=5, minspany=5, spancoords='pixels', interactive=False)
-    def update_selected_region(event):
-      if toggle_selector.RS.active:
-        toggle_selector.RS.update()
-    plt.connect('draw_event', update_selected_region)
-  plt.connect('key_press_event', toggle_selector)
+  register_event_handlers(ax)
 
   plt.show()
   return focused_set
