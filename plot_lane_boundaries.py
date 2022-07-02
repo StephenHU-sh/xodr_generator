@@ -47,7 +47,7 @@ class Separator:
 class Lane:
   base_x = 0
   base_y = 0
-  
+
   @classmethod
   def set_base(cls, x, y):
     cls.base_x = x
@@ -73,6 +73,9 @@ class Lane:
     self.left_bnd_to_recut = []  # [(x1,y1),(x2,y2),...])
     self.right_bnd_to_recut = []
 
+    self.clear_topo()
+
+  def clear_topo(self):
     self.left_neighbors = set()
     self.right_neighbors = set()
     self.predecessors = set()
@@ -203,7 +206,7 @@ class Road:
     self.heading = [h1, h2]
 
   def merge_overlapped_lanes(self):
-    for (lane_id, lane) in self.lanes.items():
+    for lane_id, lane in self.lanes.items():
       # Only handle at most 2 lanes got merged
       assert(len(lane.overlapped) <= 1)
       if len(lane.overlapped) > 0:
@@ -244,6 +247,22 @@ class Road:
           return True
     return False
 
+  def split_road_with_overlapped_lanes(self, lanes_overlapped):
+    print(f"Road[{self.id}: {[lane.full_id for lane in lanes_overlapped]}]")
+    assert(len(lanes_overlapped) == 2)
+    new_road = None
+    lanes = list(self.lanes.values())
+    for idx, lane in enumerate(lanes):
+      if lane == lanes_overlapped[1]:
+        new_road = Road("split_" + self.id)
+        for j in range(idx, len(lanes)):
+          lane.road = new_road
+          new_road.add_lane(lane)
+        break
+    for lane_id in new_road.lanes:
+      del self.lanes[lane_id]
+    return new_road
+
   def __repr__(self):
     return f"Road[{self.id}]"
 
@@ -251,12 +270,12 @@ class Road:
     from_road = ""
     to_road = "" 
     if self.linkage[0] is not None:
-      if isinstance(self.linkage[0][0], int):
+      if self.linkage[0][1] == "junction":
         from_road = f", from Junction[{self.linkage[0][0]}]"
       else:
         from_road = f", from Road[{self.linkage[0][0].id}] {self.linkage[0][1]}"
     if self.linkage[1] is not None:
-      if isinstance(self.linkage[1][0], int):
+      if self.linkage[1][1] == "junction":
         to_road = f", to Junction[{self.linkage[1][0]}]"
       else:
         to_road = f", to Road[{self.linkage[1][0].id}] {self.linkage[1][1]}"
@@ -309,11 +328,11 @@ class RoadNetwork:
       lane_subid = int(lane_id[pos+1:])
 
       if road_id not in self.roads:
-        self.add_road(road_id)
+        self.add_road(Road(road_id))
       self.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
 
-  def add_road(self, road_id):
-    self.roads[road_id] = Road(road_id)
+  def add_road(self, road):
+    self.roads[road.id] = road
 
   def pt_lane_set(self, x, y):
     pt_str = pt_hash(x, y)
@@ -352,6 +371,11 @@ class RoadNetwork:
     for lane3 in to_del:
       lane.successors.remove(lane3)
 
+  def clear_lane_topo(self):
+    for road_id, road in self.roads.items():
+      for lane in road.lanes.values():
+        lane.clear_topo()
+
   def compute_lane_topo(self):
     for road_id, road in self.roads.items():
       #if road_id != '557024172,0,0,53':
@@ -387,6 +411,20 @@ class RoadNetwork:
         lanes_got_merged = lanes_got_merged or road.merge_overlapped_lanes()
       if not lanes_got_merged:
         break
+
+  def split_road_with_overlapped_lanes(self):
+    new_roads = []
+    for road_id, road in self.roads.items():
+      lanes_overlapped = []
+      for lane_id, lane in road.lanes.items():
+        if len(lane.overlapped) > 0:
+          lanes_overlapped.append(lane)
+      if len(lanes_overlapped) > 0:
+        new_road = road.split_road_with_overlapped_lanes(lanes_overlapped)
+        new_roads.append(new_road)
+    for new_road in new_roads:
+      self.add_road(new_road)
+    return len(new_roads) > 0
 
   def update_separator_ids(self, separator_ids, start_sep, end_sep):
     if end_sep in separator_ids and start_sep not in separator_ids:
@@ -742,11 +780,16 @@ class RoadNetwork:
       return
 
     #self.merge_overlapped_lanes()
+    if self.split_road_with_overlapped_lanes():
+      self.clear_lane_topo()
+      self.update_pt2lane_hash_table()
+      self.compute_lane_topo()
 
     for road_id, road in self.roads.items():
       road.build_ref_line()
       road.resample_ref_line(5.0)
       road.compute_ref_line_bc_derivative()
+    return
     
     sep_set = self.refine_lane_terminals()
     self.build_road_connections(sep_set)
