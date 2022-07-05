@@ -68,9 +68,10 @@ class Lane:
     cls.base_x = x
     cls.base_y = y
 
-  def __init__(self, full_id, id, poly):
+  def __init__(self, full_id, id, type, poly):
     self.road_id = None
     self.full_id = full_id
+    self.type = type
     self.id = id
     self.xodr = None
 
@@ -344,6 +345,9 @@ class RoadNetwork:
       lane_id = f["properties"]["id"]
       if focused_set and lane_id not in focused_set:
         continue
+      lane_type = f["properties"]["lane_type"]
+      if lane_type in {"EMERGENCY_LANE"}:
+        continue
 
       pos = lane_id.rfind(",")
       road_id = lane_id[:pos]
@@ -351,7 +355,7 @@ class RoadNetwork:
 
       if road_id not in self.roads:
         self.add_road(Road(road_id))
-      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
+      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, lane_type, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
 
   def add_road(self, road):
     self.roads[road.id] = road
@@ -908,7 +912,7 @@ def toggle_selector(event):
   if event.key == "enter":
     global focused_set
     for selected_poly in polygon_item.PolygonInteractor.selection_set:
-      focused_set.add(selected_poly.lane_id)
+      focused_set.add(selected_poly.lane.full_id)
     plt.close()
 
   elif event.key == "a":
@@ -930,7 +934,7 @@ def on_pick(event):
   if event.mouseevent.key != 'control' or event.mouseevent.button != 1:
     return
   polygon_item.PolygonInteractor.picked = event.artist
-  print(f"Lane[{event.artist.lane_id}] got picked.")
+  print(f"Lane[{event.artist.lane.full_id}] {event.artist.lane.type} got picked.")
   fig.canvas.draw()
   fig.canvas.flush_events()
 
@@ -945,7 +949,7 @@ def draw_lanes(my_map, ax):
 
       poly = Polygon(np.column_stack(xxyy), animated=True, color = (0,0,0,0))
       ax.add_patch(poly)
-      poly.lane_id = lane.full_id # (road_id, lane_subid)
+      poly.lane = lane
       polys.append(poly)
 
       if 0:
