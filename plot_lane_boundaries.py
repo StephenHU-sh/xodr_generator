@@ -62,11 +62,13 @@ class Junction:
 class Lane:
   base_x = 0
   base_y = 0
+  base_z = 0
 
   @classmethod
-  def set_base(cls, x, y):
+  def set_base(cls, x, y, z):
     cls.base_x = x
     cls.base_y = y
+    cls.base_z = z
 
   def __init__(self, full_id, id, type, poly):
     self.road_id = None
@@ -75,7 +77,8 @@ class Lane:
     self.id = id
     self.xodr = None
 
-    self.poly = [(x-Lane.base_x, y-Lane.base_y) for x,y in poly]
+    self.poly = [(x-Lane.base_x, y-Lane.base_y) for x,y,z in poly]
+    self.poly3d = [(x-Lane.base_x, y-Lane.base_y, z-Lane.base_z) for x,y,z in poly]
     xx, yy = xyxy2xxyy(self.poly)
 
     # Split the lane polygon into two boundaries
@@ -340,7 +343,7 @@ class RoadNetwork:
         continue
       if Lane.base_x == 0.0 and Lane.base_y == 0.0:
         x, y, z = first(f["geometry"]["coordinates"])
-        Lane.set_base(x, y)
+        Lane.set_base(x, y, z)
 
       lane_id = f["properties"]["id"]
       if focused_set and lane_id not in focused_set:
@@ -355,7 +358,7 @@ class RoadNetwork:
 
       if road_id not in self.roads:
         self.add_road(Road(road_id))
-      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, lane_type, [(x,y) for x,y,z in f["geometry"]["coordinates"]]))
+      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, lane_type, f["geometry"]["coordinates"]))
 
   def add_road(self, road):
     self.roads[road.id] = road
