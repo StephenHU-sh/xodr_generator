@@ -1,9 +1,5 @@
 import matplotlib
 matplotlib.use('TkAgg')
-#matplotlib.use('WXAgg') 
-#matplotlib.use('Qt5Agg') 
-#matplotlib.use('QtAgg') 
-#matplotlib.use('WebAgg') 
 
 import os
 import math
@@ -43,6 +39,25 @@ class Separator:
     self.road_id = None
     self.road_split_from = None
     self.road_merged_to = None
+
+    # for lane spliting/merging junction
+    self.junction = None
+
+
+class Junction:
+  def __init__(self, id):
+    self.id = id
+    self.connecting_roads = set()
+
+  def add_connecting_road(self, road):
+    self.connecting_roads.add(road)
+
+  def debug_print(self):
+    print(f"Junction [{self.id}]")
+    print(f"\tConnecting Roads:")
+    for road in self.connecting_roads:
+      print((f"\t\t[{road.id}]"))
+
 
 class Lane:
   base_x = 0
@@ -131,14 +146,6 @@ class Lane:
 
 
   def debug_print(self, prefix=""):
-    # if self.full_id in ("557024172,0,0,36,0"):
-    #   print(f"{prefix}Lane[{self.full_id}]")
-    #   print(prefix, "right bnd end point:   %.4f, %.4f" % (self.right_bnd[0][-1], self.right_bnd[1][-1]))
-    # if self.full_id in ("557024172,0,0,37,0"):
-    #   print(f"{prefix}Lane[{self.full_id}]")
-    #   print(prefix,"right bnd start point: %.4f, %.4f" % (self.right_bnd[0][0], self.right_bnd[1][0]))
-    # return
-
     print(f"{prefix}Lane[{self.id}]", end="")
     print(f"\tleft:{[lane.id for lane in self.left_neighbors]},", end="")
     print(f"\tright:{[lane.id for lane in self.right_neighbors]},", end="")
@@ -150,15 +157,23 @@ class Lane:
 class Road:
   def __init__(self, id):
     self.id = id
-    self.short_id = int(id.split(",")[-1])
+
+    # id => short id
+    # 557024174,0,0,10020 => 1740010020
+    # 557024174,0,0,20    => 1740000020
+    sub_ids = [int(s) for s in id.split(",")]
+    self.short_id = int((sub_ids[0]-sub_ids[0]//1000*1000)*1e7 + sub_ids[1]*1e6 + sub_ids[2]*1e5 + sub_ids[3])
+
     self.xodr = None
     self.lanes = OrderedDict()
     self.old_ref_line = None
     self.ref_line = None  # (xx, yy)
+    self.overlapped_road = set()
 
-    # assume roads are connected in:
+    # Assume roads are connected in:
     #   ... => (road_a_start, road_a_end) => (road_b_start, road_b_end) => ...
     self.linkage = [None, None] # [(prev_road_a, "end"), (next_road_b, "start")]
+    self.junction = None # For connecting roads of default junctions
 
   def add_lane(self, lane):
     lane.road_id = self.id
@@ -254,10 +269,16 @@ class Road:
     lanes = list(self.lanes.values())
     for idx, lane in enumerate(lanes):
       if lane == lanes_overlapped[1]:
-        new_road = Road("split_" + self.id)
+        # Generate new road id
+        # 557024174,0,0,20 => 557024174,0,0,10020
+        p = self.id.rfind(",")
+        new_road_id = self.id[:p+1] + str(int(self.id[p+1:]) + 10000)
+        new_road = Road(new_road_id)
         for j in range(idx, len(lanes)):
-          lane.road = new_road
-          new_road.add_lane(lane)
+          lanes[j].road = new_road
+          new_road.add_lane(lanes[j])
+        self.overlapped_road.add(new_road)
+        new_road.overlapped_road.add(self)
         break
     for lane_id in new_road.lanes:
       del self.lanes[lane_id]
@@ -311,6 +332,7 @@ class RoadNetwork:
   def __init__(self, gjson, focused_set=set()):
     self.roads = OrderedDict()
     self.debug_pts = []
+    self.default_junctions = []
 
     for f in gjson["features"]:
       if f["properties"]["layer"] != "lane":
@@ -390,6 +412,8 @@ class RoadNetwork:
           a = self.pt_lane_set(lanes[i].left_bnd[0][0], lanes[i].left_bnd[1][0])
           b = self.pt_lane_set(lanes[i].right_bnd[0][0], lanes[i].right_bnd[1][0])
           lanes[i].predecessors = a.intersection(b).difference(set([lanes[i]]))
+          for overlapped_road in lanes[i].road.overlapped_road:
+            lanes[i].predecessors -= set(overlapped_road.lanes.values())
         else:
           self.growning = True
 
@@ -399,6 +423,8 @@ class RoadNetwork:
           a = self.pt_lane_set(lanes[i].left_bnd[0][-1], lanes[i].left_bnd[1][-1])
           b = self.pt_lane_set(lanes[i].right_bnd[0][-1], lanes[i].right_bnd[1][-1])
           lanes[i].successors = a.intersection(b).difference(set([(lanes[i])]))
+          for overlapped_road in lanes[i].road.overlapped_road:
+            lanes[i].successors -= set(overlapped_road.lanes.values())
         else:
           self.reducing = True
 
@@ -543,11 +569,11 @@ class RoadNetwork:
       # Select road direction from road merged to or split from
       if start_count > 1 and end_count == 1:
         sep.road_split_from = road_with_end_point
-        sep.road_id = road_with_end_point.short_id
+        sep.road_short_id = road_with_end_point.short_id
         heading = road_with_end_point.heading[1]
       elif start_count == 1 and end_count > 1:
         sep.road_merged_to = road_with_start_point
-        sep.road_id = road_with_start_point.short_id
+        sep.road_short_id = road_with_start_point.short_id
         heading = road_with_start_point.heading[0]
       else: # Or select direction of the most straight road
         min_curvature = 999999
@@ -562,9 +588,6 @@ class RoadNetwork:
             heading = road.heading[0 if start_or_end == "start" else 1]
       for road, start_or_end in sep.terminals:
         idx = 0 if start_or_end == "start" else 1
-        # if road.id == "557024172,0,0,36" and start_or_end == "end":
-        #   print("old road end heading: ", math.degrees(road.heading[idx]))
-        #   print("new road end heading: ", math.degrees(heading))
         road.heading[idx] = heading
       sep.heading = heading
     return sep_set
@@ -734,6 +757,25 @@ class RoadNetwork:
     self.recut_bnd(sep_set)
     return sep_set
 
+  def build_default_junctions(self, sep_set):
+    for sep_set_id, sep in sep_set.items():
+      if len(sep.terminals) > 2:
+        for road, start_or_end in sep.terminals:
+          if road.overlapped_road:
+            if road.junction is not None:
+              continue
+            # TODO: handle more than 2 lanes overlapped
+            overlapped_road = first(road.overlapped_road)
+            # Select a junction id
+            junction_id = road.short_id if road.short_id < overlapped_road.short_id else overlapped_road.short_id
+            this_junction = Junction(junction_id)
+            this_junction.add_connecting_road(road)
+            this_junction.add_connecting_road(overlapped_road)
+            road.junction = this_junction
+            overlapped_road.junction = this_junction
+            self.default_junctions.append(this_junction)
+            sep.junction = this_junction
+
   def build_road_connections(self, sep_set):
     for sep_set_id, sep in sep_set.items():
       if len(sep.terminals) == 2:
@@ -748,7 +790,6 @@ class RoadNetwork:
           road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
           print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
       elif len(sep.terminals) > 2:
-        # For direct junctions
         terminals = list(sep.terminals)
         for idx_i in range(len(terminals)):
           road_a, start_or_end_a = terminals[idx_i]
@@ -758,14 +799,37 @@ class RoadNetwork:
               continue
             pt_a_idx = 0 if start_or_end_a == "start" else -1
             pt_b_idx = 0 if start_or_end_b == "start" else -1
-            junction_id = sep.road_id # use road id as direct junction id
-            road_a.linkage[pt_a_idx] = (junction_id, "junction")
-            road_b.linkage[pt_b_idx] = (junction_id, "junction")
 
+            if sep.junction is None:
+              # For direct junctions:
+              junction_id = sep.road_short_id
+            else:
+              # For default junctions:
+              junction_id = sep.junction.id
+              
+            if road_a.junction is not None:
+              # connecting roads
+              road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
+              print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+            else:
+              # incoming/outcoming roads
+              road_a.linkage[pt_a_idx] = (junction_id, "junction")
+              print(f"Link: Road [{road_a.id}] {start_or_end_a} and Junction [{junction_id}]")
+
+            if road_b.junction is not None:
+              road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
+              print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+            else:
+              road_b.linkage[pt_b_idx] = (junction_id, "junction")
+              print(f"Link: Road [{road_b.id}] {start_or_end_b} and Junction [{junction_id}]")
+  
   def save_direct_junction_info(self, sep_set):
     self.direct_junction_info = []
     for sep_set_id, sep in sep_set.items():
       if sep.road_split_from is None and sep.road_merged_to is None:
+        continue
+      is_for_default_junction = np.any([(road.junction is not None) for road, start_or_end in sep.terminals])
+      if is_for_default_junction:
         continue
       self.direct_junction_info.append(sep)
 
@@ -789,9 +853,9 @@ class RoadNetwork:
       road.build_ref_line()
       road.resample_ref_line(5.0)
       road.compute_ref_line_bc_derivative()
-    return
     
     sep_set = self.refine_lane_terminals()
+    self.build_default_junctions(sep_set)
     self.build_road_connections(sep_set)
     self.save_direct_junction_info(sep_set)
 
@@ -812,6 +876,8 @@ class RoadNetwork:
       # if road_id not in ("557024172,0,0,36"):
       #   continue
       road.debug_print()
+    for junction in self.default_junctions:
+      junction.debug_print()
 
 
 def get_polys_in_region():
@@ -959,7 +1025,7 @@ def register_event_handlers(ax):
         toggle_selector.RS.update()
     plt.connect('draw_event', update_selected_region)
   plt.connect('key_press_event', toggle_selector)
-  
+
 def run(focused_set2=set()):
   global fig, polys, focused_set, my_map
   focused_set = focused_set2

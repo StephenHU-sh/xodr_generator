@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from numpy import arange
 from scenariogeneration import xodr
 from shapely.geometry import LineString, Point
@@ -53,7 +54,7 @@ def pts_dir(pts):
         theta -= math.pi/2
         return math.cos(theta), math.sin(theta)
 
-def export_road(odr, road, road_id):
+def export_road(odr, road):
     planview = xodr.PlanView()
     s = 0.0
     pts = xxyy2xyxy(road.ref_line)
@@ -115,11 +116,6 @@ def export_road(odr, road, road_id):
         width_b.append(0.0)
         left_bnd_st = interp1d(right_bnd_s, right_bnd_t, fill_value="extrapolate")
 
-        # if lane.full_id == "557024172,0,0,36,0":
-        #     print(f"[{lane.full_id}] end   ","    width: %.10f" % (width_a[-1]))
-        # if lane.full_id == "557024172,0,0,37,0":
-        #     print(f"[{lane.full_id}] start ","    width: %.10f" % (width_a[0]))
-
         new_xodr_lane = xodr.Lane(lane_type=xodr.LaneType.driving, a=width_a, b=width_b, soffset=soffset)
         if len(lanesection.rightlanes) > 0:
             roadmark_dashed = xodr.RoadMark(xodr.RoadMarkType.broken, 0.01)
@@ -127,20 +123,11 @@ def export_road(odr, road, road_id):
         lanesection.add_right_lane(new_xodr_lane)
         lane.xodr = new_xodr_lane
 
-    # lanesection.add_left_lane(xodr.Lane(lane_type=xodr.LaneType.median, a=[0.3, 2.3, 2.3, 0.3], b=[0.2, 0.0, -0.2, 0.0], soffset=[0.0, 10.0, 20.0, 30.0]))
-    # lanesection.add_right_lane(xodr.Lane(lane_type=xodr.LaneType.median, a=0.3))
-
-    # left_lane_with_roadmark = xodr.Lane(a=[4, 5, 5, 4], b=[0.1, 0.0, -0.1, 0.0], soffset=[0.0, 10.0, 20.0, 30.0])
-    # left_lane_with_roadmark.add_roadmark(xodr.STD_ROADMARK_BROKEN)
-    # lanesection.add_left_lane(left_lane_with_roadmark)
-    # right_lane_with_roadmark = xodr.Lane(a=[4, 5, 5, 4], b=[0.1, 0.0, -0.1, 0.0], soffset=[0.0, 10.0, 20.0, 30.0])
-    # right_lane_with_roadmark.add_roadmark(xodr.STD_ROADMARK_SOLID)
-    # lanesection.add_right_lane(right_lane_with_roadmark)
-
     lanes = xodr.Lanes()
     lanes.add_lanesection(lanesection)
 
-    xodr_road = xodr.Road(road_id, planview, lanes)
+    junction_id = road.junction.id if road.junction is not None else -1
+    xodr_road = xodr.Road(road.short_id, planview, lanes, road_type=junction_id)
     xodr_road.original_id = road.id
     odr.add_road(xodr_road)
     road.xodr = xodr_road
@@ -205,13 +192,28 @@ def export_direct_junction(odr, sep):
             creator.add_connection(lane.road.xodr, next_lane.road.xodr, src_lane_ids, dst_lane_ids)
         odr.add_junction_creator(creator)
 
+def export_default_junction(odr, junction):
+    j = xodr.Junction(str(junction.id), junction.id)
+    connections = OrderedDict()
+    for road in junction.connecting_roads:
+        for lane in road.lanes.values():
+            for prev_lane in lane.predecessors:
+                connection_id = (prev_lane.road.short_id, lane.road.short_id)
+                if connection_id not in connections:
+                    connections[connection_id] = []
+                connections[connection_id].append((prev_lane.xodr.lane_id, lane.xodr.lane_id))
+    for (incoming_road_id, connecting_road_id), links in connections.items():
+        c = xodr.Connection(incoming_road_id, connecting_road_id, xodr.ContactPoint.start)
+        for incoming_lane_id, connecting_lane_id in links:
+            c.add_lanelink(incoming_lane_id, connecting_lane_id)
+        j.add_connection(c)
+    odr.add_junction(j)
+
 def export(my_map):
     odr = xodr.OpenDrive("myroad")
-    for idx, (road_id, road) in enumerate(my_map.roads.items()):
-        #if road_id != "557024172,0,0,66":
-        #    continue
-        print(f"{road.short_id}: \t{road_id}")
-        export_road(odr, road, road.short_id)
+    for road_id, road in my_map.roads.items():
+        print(road_id)
+        export_road(odr, road)
         
     for road_id, road in my_map.roads.items():
         export_road_linkage(odr, road)
@@ -219,18 +221,8 @@ def export(my_map):
     for sep in my_map.direct_junction_info:
         export_direct_junction(odr, sep)
 
-    # junction_id = 999
-    # road_37 = my_map.roads["557024172,0,0,37"]
-    # road_17 = my_map.roads["557024172,0,0,17"]
-    # road_66 = my_map.roads["557024172,0,0,66"]
-    # road_36 = my_map.roads["557024172,0,0,36"]
-    # road_16 = my_map.roads["557024172,0,0,16"]
-
-    # # road_37.xodr.add_successor(xodr.ElementType.road, road_66.xodr.id, lane_offset=-4)
-    # # road_17.xodr.add_successor(xodr.ElementType.road, road_66.xodr.id)
-    # # road_66.xodr.add_predecessor(xodr.ElementType.junction, junction_id)
-    # entry_junction = xodr.create_junction([road_37.xodr, road_17.xodr], junction_id, [road_66.xodr, road_36.xodr, road_16.xodr])
-    # odr.add_junction(entry_junction)
+    for junction in my_map.default_junctions:
+        export_default_junction(odr, junction)
 
     odr.write_xml("test.xodr")
     print("Done")
