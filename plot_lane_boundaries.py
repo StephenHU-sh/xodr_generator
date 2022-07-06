@@ -70,24 +70,25 @@ class Lane:
     cls.base_y = y
     cls.base_z = z
 
-  def __init__(self, full_id, id, type, poly):
+  def __init__(self, full_id, id, type, poly=None):
     self.road_id = None
     self.full_id = full_id
     self.type = type
     self.id = id
     self.xodr = None
 
-    self.poly = [(x-Lane.base_x, y-Lane.base_y) for x,y,z in poly]
-    self.poly3d = [(x-Lane.base_x, y-Lane.base_y, z-Lane.base_z) for x,y,z in poly]
-    xx, yy = xyxy2xxyy(self.poly)
+    if poly is not None:
+      self.poly = [(x-Lane.base_x, y-Lane.base_y) for x,y,z in poly]
+      self.poly3d = [(x-Lane.base_x, y-Lane.base_y, z-Lane.base_z) for x,y,z in poly]
+      xx, yy = xyxy2xxyy(self.poly)
 
-    # Split the lane polygon into two boundaries
-    for idx, pt in enumerate(poly):
-      if pt[0] == 1234.0 and pt[1] == 4567.0:
-        break
-    self.left_bnd = (xx[:idx], yy[:idx])
-    self.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
-    self.update_poly()
+      # Split the lane polygon into two boundaries
+      for idx, pt in enumerate(poly):
+        if pt[0] == 1234.0 and pt[1] == 4567.0:
+          break
+      self.left_bnd = (xx[:idx], yy[:idx])
+      self.right_bnd = (list(reversed(xx[idx+1:-1])), list(reversed(yy[idx+1:-1])))
+      self.update_poly()
     
     self.left_bnd_to_recut = []  # [(x1,y1),(x2,y2),...])
     self.right_bnd_to_recut = []
@@ -102,6 +103,36 @@ class Lane:
     self.overlapped = set()
     self.reducing = False
     self.growning = False
+
+  def remove_fake_lanes_in_topo(self):
+    self.left_neighbors = set([lane for lane in self.left_neighbors if lane.type != "FAKE"])
+    self.right_neighbors = set([lane for lane in self.right_neighbors if lane.type != "FAKE"])
+    self.predecessors = set([lane for lane in self.predecessors if lane.type != "FAKE"])
+    self.successors = set([lane for lane in self.successors if lane.type != "FAKE"])
+    self.overlapped = set([lane for lane in self.overlapped if lane.type != "FAKE"])
+    if self.type == "FAKE":
+      self.clear_topo()
+
+  def compute_overlapped_lanes(self):
+    # Spliting
+    to_del = []
+    for lane in self.predecessors:
+      if self.road_id == lane.road_id:
+        self.overlapped.add(lane)
+        lane.overlapped.add(self)
+        to_del.append(lane)
+    for lane in to_del:
+      self.predecessors.remove(lane)
+
+    # Merging
+    to_del = []
+    for lane in self.successors:
+      if self.road_id == lane.road_id:
+        self.overlapped.add(lane)
+        lane.overlapped.add(self)
+        to_del.append(lane)
+    for lane in to_del:
+      self.successors.remove(lane)
 
   def recut_bnd(self, base_pt, heading, start_or_end):
     d = 60.0
@@ -279,13 +310,21 @@ class Road:
         new_road_id = self.id[:p+1] + str(int(self.id[p+1:]) + 10000)
         new_road = Road(new_road_id)
         for j in range(idx, len(lanes)):
+          if j == idx:
+            fake_lane = Lane(new_road_id + ",-1", "-1", "FAKE")
+            fake_lane.left_bnd = lanes_overlapped[0].left_bnd
+            fake_lane.right_bnd = lanes_overlapped[1].left_bnd
+            fake_lane.update_poly()
+            fake_lane.road = new_road
+            new_road.add_lane(fake_lane)
           lanes[j].road = new_road
           new_road.add_lane(lanes[j])
         self.overlapped_road.add(new_road)
         new_road.overlapped_road.add(self)
         break
     for lane_id in new_road.lanes:
-      del self.lanes[lane_id]
+      if new_road.lanes[lane_id].type != "FAKE":
+        del self.lanes[lane_id]
     return new_road
 
   def __repr__(self):
@@ -379,27 +418,6 @@ class RoadNetwork:
             self.pt2lane[pt_str] = set()
           self.pt2lane[pt_str].add(lane)
 
-  def compute_overlapped_lanes(self, lane):
-    # Spliting
-    to_del = []
-    for lane2 in lane.predecessors:
-      if lane.road_id == lane2.road_id:
-        lane.overlapped.add(lane2)
-        lane2.overlapped.add(lane)
-        to_del.append(lane2)
-    for lane3 in to_del:
-      lane.predecessors.remove(lane3)
-
-    # Merging
-    to_del = []
-    for lane2 in lane.successors:
-      if lane.road_id == lane2.road_id:
-        lane.overlapped.add(lane2)
-        lane2.overlapped.add(lane)
-        to_del.append(lane2)
-    for lane3 in to_del:
-      lane.successors.remove(lane3)
-
   def clear_lane_topo(self):
     for road_id, road in self.roads.items():
       for lane in road.lanes.values():
@@ -435,7 +453,8 @@ class RoadNetwork:
         else:
           self.reducing = True
 
-        self.compute_overlapped_lanes(lanes[i])
+        lanes[i].remove_fake_lanes_in_topo()
+        lanes[i].compute_overlapped_lanes()
 
   def merge_overlapped_lanes(self):
     while True:
@@ -623,6 +642,7 @@ class RoadNetwork:
 
       assert(len(base_pts) > 0 or len(sep.terminals) == 2)
       if len(base_pts) == 0:
+        # Connected without lane merging/splitting
         for idx, (road, start_or_end) in enumerate(sep.terminals):
           pt_idx = 0 if start_or_end == "start" else -1
           if idx == 0:
@@ -634,21 +654,31 @@ class RoadNetwork:
       if len(base_pts) != 1:
         # For overlapped merging lanes,
         # we usually find 2 or more shared start/end points among roads.
-        # Draw the separation line along the first 2 points.
-        heading = math.atan2(base_pts[1][1]-base_pts[0][1], base_pts[1][0]-base_pts[0][0])
-        heading += math.pi/2
+        # Select the point with the largest projected distance that extends the reference line,
+        # so that to simplify the recutting with unique cutting position on lane boundaries.
         for road, start_or_end in sep.terminals:
-          if start_or_end == "start":
-            heading2 = math.atan2(road.ref_line[1][1]-road.ref_line[1][0], road.ref_line[0][1]-road.ref_line[0][0])
-            if math.cos(heading)*math.cos(heading2)+math.sin(heading)*math.sin(heading) < 0.5:
-             heading += math.pi
-            for road2, start_or_end in sep.terminals:
-              if start_or_end == "start":
-                road2.heading[0] = heading
+          if len(road.overlapped_road) > 0:
+            pt_idx = 0 if start_or_end == "start" else -1
+            heading = road.heading[pt_idx]
+            ref_pt = (road.ref_line[0][pt_idx], road.ref_line[1][pt_idx])
+            selected_base_pt = None
+            for base_pt in base_pts:
+              v = (base_pt[0]-ref_pt[0], base_pt[1]-ref_pt[1])
+              projected_dist = math.cos(heading)*v[0] + math.sin(heading)*v[1]
+              if selected_base_pt is None:
+                selected_base_pt = base_pt
+                projected_dist_of_selected_base_pt = projected_dist
               else:
-                road2.heading[1] = heading
-            sep.heading = heading
-            sep.base_pts = [base_pts[0]]
+                if start_or_end == "start":
+                  if projected_dist < projected_dist_of_selected_base_pt:
+                    projected_dist_of_selected_base_pt = projected_dist
+                    selected_base_pt = base_pt
+                else: # "end"
+                  if projected_dist > projected_dist_of_selected_base_pt:
+                    projected_dist_of_selected_base_pt = projected_dist
+                    selected_base_pt = base_pt
+            assert(selected_base_pt is not None)
+            sep.base_pts = [selected_base_pt]
             break
       else:
         sep.base_pts = base_pts
