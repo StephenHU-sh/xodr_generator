@@ -192,6 +192,7 @@ class Lane:
 class Road:
   def __init__(self, id):
     self.id = id
+    self.original_id = id
 
     # id => short id
     # 557024174,0,0,10020 => 1740010020
@@ -207,7 +208,7 @@ class Road:
 
     # Assume roads are connected in:
     #   ... => (road_a_start, road_a_end) => (road_b_start, road_b_end) => ...
-    self.linkage = [None, None] # [(prev_road_a, "end"), (next_road_b, "start")]
+    self.linkage = [set(), set()] # [set([(prev_road_a, "end"), ...]), set([(next_road_b, "start"),...])]
     self.junction = None # For connecting roads of default junctions
 
   def add_lane(self, lane):
@@ -297,7 +298,7 @@ class Road:
           return True
     return False
 
-  def split_road_with_overlapped_lanes(self, lanes_overlapped):
+  def split_road_with_overlapped_lanes(self, lanes_overlapped, use_new_ref_line):
     print(f"Road[{self.id}: {[lane.full_id for lane in lanes_overlapped]}]")
     assert(len(lanes_overlapped) == 2)
     new_road = None
@@ -309,8 +310,10 @@ class Road:
         p = self.id.rfind(",")
         new_road_id = self.id[:p+1] + str(int(self.id[p+1:]) + 10000)
         new_road = Road(new_road_id)
+        new_road.original_id = self.id
         for j in range(idx, len(lanes)):
-          if j == idx:
+          if j == idx and not use_new_ref_line:
+            # Use old ref line and lane offset if road are not split.
             fake_lane = Lane(new_road_id + ",-1", "-1", "FAKE")
             fake_lane.left_bnd = first(lanes_overlapped[0].road.lanes.values()).left_bnd
             fake_lane.right_bnd = lanes_overlapped[1].left_bnd
@@ -333,16 +336,16 @@ class Road:
   def debug_print(self):
     from_road = ""
     to_road = "" 
-    if self.linkage[0] is not None:
-      if self.linkage[0][1] == "junction":
-        from_road = f", from Junction[{self.linkage[0][0]}]"
+    for linkage in self.linkage[0]:
+      if linkage[1] == "junction":
+        from_road += f", from Junction[{linkage[0]}]"
       else:
-        from_road = f", from Road[{self.linkage[0][0].id}] {self.linkage[0][1]}"
-    if self.linkage[1] is not None:
-      if self.linkage[1][1] == "junction":
-        to_road = f", to Junction[{self.linkage[1][0]}]"
+        from_road += f", from Road[{linkage[0].id}] {linkage[1]}"
+    for linkage in self.linkage[1]:
+      if linkage[1] == "junction":
+        to_road += f", to Junction[{linkage[0]}]"
       else:
-        to_road = f", to Road[{self.linkage[1][0].id}] {self.linkage[1][1]}"
+        to_road += f", to Road[{linkage[0].id}] {linkage[1]}"
     print(f"Road[{self.id}]{from_road}{to_road}")
 
     for lane_id, lane in self.lanes.items():
@@ -425,11 +428,13 @@ class RoadNetwork:
 
   def compute_lane_topo(self):
     for road_id, road in self.roads.items():
-      #if road_id != '557024172,0,0,53':
-      #  continue
       lanes = list(road.lanes.values())
       for i in range(len(lanes)):
+        if lanes[i].type == "FAKE":
+          continue
         for j in range(i+1, len(lanes)):
+          if lanes[j].type == "FAKE":
+            continue
           update_neighbor(lanes[i], lanes[j])
         a_hash = pt_hash(lanes[i].left_bnd[0][0], lanes[i].left_bnd[1][0])
         b_hash = pt_hash(lanes[i].right_bnd[0][0], lanes[i].right_bnd[1][0])
@@ -468,11 +473,16 @@ class RoadNetwork:
     new_roads = []
     for road_id, road in self.roads.items():
       lanes_overlapped = []
+      prev_road_set = set()
+      next_road_set = set()
       for lane_id, lane in road.lanes.items():
         if len(lane.overlapped) > 0:
           lanes_overlapped.append(lane)
+          prev_road_set |= set([prev.road.original_id for prev in lane.predecessors])
+          next_road_set |= set([next.road.original_id for next in lane.successors])
       if len(lanes_overlapped) > 0:
-        new_road = road.split_road_with_overlapped_lanes(lanes_overlapped)
+        use_new_ref_line = len(prev_road_set) > 1 or len(next_road_set) > 1
+        new_road = road.split_road_with_overlapped_lanes(lanes_overlapped, use_new_ref_line)
         new_roads.append(new_road)
     for new_road in new_roads:
       self.add_road(new_road)
@@ -813,6 +823,16 @@ class RoadNetwork:
             self.default_junctions.append(this_junction)
             sep.junction = this_junction
 
+  def has_lane_connected(self, road_src, road_dst):
+    lane_pair_a = []
+    for lane_a in road_src.lanes.values():
+      lane_pair_a += [(lane_a.full_id, next_lane.full_id) for next_lane in lane_a.successors]
+    lane_pair_b = []
+    for lane_b in road_dst.lanes.values():
+      lane_pair_b += [(prev_lane.full_id, lane_b.full_id) for prev_lane in lane_b.predecessors]
+    s = set(lane_pair_a).intersection(set(lane_pair_b))
+    return len(s) > 0
+    
   def build_road_connections(self, sep_set):
     for sep_set_id, sep in sep_set.items():
       if len(sep.terminals) == 2:
@@ -823,16 +843,14 @@ class RoadNetwork:
           a_hash = pt_hash(road_a.ref_line[0][pt_a_idx], road_a.ref_line[1][pt_a_idx])
           b_hash = pt_hash(road_b.ref_line[0][pt_b_idx], road_b.ref_line[1][pt_b_idx])
           #if a_hash == b_hash:
-          road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
-          road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
+          road_a.linkage[pt_a_idx].add((road_b, start_or_end_b))
+          road_b.linkage[pt_b_idx].add((road_a, start_or_end_a))
           print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
       elif len(sep.terminals) > 2:
         terminals = list(sep.terminals)
-        for idx_i in range(len(terminals)):
-          road_a, start_or_end_a = terminals[idx_i]
-          for idx_j in range(idx_i+1, len(terminals)):
-            road_b, start_or_end_b = terminals[idx_j]
-            if start_or_end_a == start_or_end_b:
+        for road_a, start_or_end_a in terminals:
+          for road_b, start_or_end_b in terminals:
+            if start_or_end_a != "end" or start_or_end_b != "start":
               continue
             pt_a_idx = 0 if start_or_end_a == "start" else -1
             pt_b_idx = 0 if start_or_end_b == "start" else -1
@@ -843,21 +861,37 @@ class RoadNetwork:
             else:
               # For default junctions:
               junction_id = sep.junction.id
-              
+
+            road_a_connected_to_road_b = None
             if road_a.junction is not None:
               # connecting roads
-              road_a.linkage[pt_a_idx] = (road_b, start_or_end_b)
-              print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+              road_a_connected_to_road_b = self.has_lane_connected(road_a, road_b)
+              if road_a_connected_to_road_b:
+                if road_b.junction is not None:
+                  # link with a connecting road from another junction...
+                  road_a.linkage[pt_a_idx].add((road_b.junction.id, "junction"))
+                else:
+                  road_a.linkage[pt_a_idx].add((road_b, start_or_end_b))
+                print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
             else:
               # incoming/outcoming roads
-              road_a.linkage[pt_a_idx] = (junction_id, "junction")
+              road_a.linkage[pt_a_idx].add((junction_id, "junction"))
               print(f"Link: Road [{road_a.id}] {start_or_end_a} and Junction [{junction_id}]")
 
             if road_b.junction is not None:
-              road_b.linkage[pt_b_idx] = (road_a, start_or_end_a)
-              print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+              # connecting roads
+              if road_a_connected_to_road_b is None:
+                road_a_connected_to_road_b = self.has_lane_connected(road_a, road_b)
+              if road_a_connected_to_road_b:
+                if road_a.junction is not None:
+                  # link with a connecting road from another junction...
+                  road_b.linkage[pt_b_idx].add((road_a.junction.id, "junction"))
+                else:
+                  road_b.linkage[pt_b_idx].add((road_a, start_or_end_a))
+                print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
             else:
-              road_b.linkage[pt_b_idx] = (junction_id, "junction")
+              # incoming/outcoming roads
+              road_b.linkage[pt_b_idx].add((junction_id, "junction"))
               print(f"Link: Road [{road_b.id}] {start_or_end_b} and Junction [{junction_id}]")
   
   def save_direct_junction_info(self, sep_set):

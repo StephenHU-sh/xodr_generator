@@ -71,6 +71,7 @@ def export_road(odr, road):
     centerlane = xodr.Lane(lane_type=xodr.LaneType.median)
     lanesection = xodr.LaneSection(0, centerlane)
     left_bnd_st = None
+    lane_offset_s = []
     for idx, (lane_subid, lane) in enumerate(road.lanes.items()):
         #if idx > 1:
         #    continue
@@ -115,6 +116,11 @@ def export_road(odr, road):
             width_b.append((width_a[idx+1]-width_a[idx])/(soffset[idx+1]-soffset[idx]+0.000001))
         width_b.append(0.0)
         left_bnd_st = interp1d(right_bnd_s, right_bnd_t, fill_value="extrapolate")
+        if lane.type == "FAKE":
+            lane_offset_s = soffset
+            lane_offset_a = width_a
+            lane_offset_b = width_b
+            continue
 
         new_xodr_lane = xodr.Lane(lane_type=xodr.LaneType.driving, a=width_a, b=width_b, soffset=soffset)
         if len(lanesection.rightlanes) > 0:
@@ -124,6 +130,9 @@ def export_road(odr, road):
         lane.xodr = new_xodr_lane
 
     lanes = xodr.Lanes()
+    if len(lane_offset_s) > 0:
+        for s, a, b in zip(lane_offset_s, lane_offset_a, lane_offset_b):
+            lanes.add_laneoffset(xodr.LaneOffset(s, -a, -b))
     lanes.add_lanesection(lanesection)
 
     junction_id = road.junction.id if road.junction is not None else -1
@@ -134,33 +143,35 @@ def export_road(odr, road):
 
 def export_road_linkage(odr, road_a):
     road_set = set()
-    for idx, linkage in enumerate([road_a.linkage[0], road_a.linkage[1]]):
-        if linkage is None:
-            continue
-        road_b, start_or_end_b = linkage
-        road_set.add(road_b)
-        if start_or_end_b == "end":
-            #road_b.xodr.add_successor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.start)
-            road_a.xodr.add_predecessor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.end)
-        elif start_or_end_b == "start":
-            #road_b.xodr.add_predecessor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.end)
-            road_a.xodr.add_successor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.start)
-        else: # "junction"
-            junction_id = road_b
-            if idx == 0:
-                road_a.xodr.add_predecessor(xodr.ElementType.junction, junction_id)
-            else:
-                road_a.xodr.add_successor(xodr.ElementType.junction, junction_id)
+
+    for idx in range(2):
+        for linkage in road_a.linkage[idx]:
+            road_b, start_or_end_b = linkage
+            road_set.add(road_b)
+            if start_or_end_b == "end":
+                #road_b.xodr.add_successor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.start)
+                road_a.xodr.add_predecessor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.end)
+            elif start_or_end_b == "start":
+                #road_b.xodr.add_predecessor(xodr.ElementType.road, road_a.xodr.id, xodr.ContactPoint.end)
+                road_a.xodr.add_successor(xodr.ElementType.road, road_b.xodr.id, xodr.ContactPoint.start)
+            else: # "junction"
+                junction_id = road_b
+                if idx == 0:
+                    road_a.xodr.add_predecessor(xodr.ElementType.junction, junction_id)
+                else:
+                    road_a.xodr.add_successor(xodr.ElementType.junction, junction_id)
 
     for lane_id, lane in road_a.lanes.items():
         for predecessor in lane.predecessors:
-            from_junction = road_a.linkage[0] is not None and road_a.linkage[0][1] == "junction"
-            if from_junction or predecessor.road in road_set:
-                lane.xodr.add_link("predecessor", predecessor.xodr.lane_id)
+            for linkage in road_a.linkage[0]:
+                from_junction = linkage is not None and linkage[1] == "junction"
+                if from_junction or predecessor.road in road_set:
+                    lane.xodr.add_link("predecessor", predecessor.xodr.lane_id)
         for successor in lane.successors:
-            to_junction = road_a.linkage[1] is not None and road_a.linkage[1][1] == "junction"
-            if to_junction or successor.road in road_set:
-                lane.xodr.add_link("successor", successor.xodr.lane_id)
+            for linkage in road_a.linkage[1]:
+                to_junction = linkage is not None and linkage[1] == "junction"
+                if to_junction or successor.road in road_set:
+                    lane.xodr.add_link("successor", successor.xodr.lane_id)
 
 def export_direct_junction(odr, sep):
     if sep.road_split_from is not None:
