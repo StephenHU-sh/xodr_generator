@@ -204,7 +204,7 @@ def export_direct_junction(odr, sep):
         odr.add_junction_creator(creator)
 
 def export_default_junction(odr, junction):
-    j = xodr.Junction(str(junction.id), junction.id)
+    j = xodr.Junction(junction.set_id, junction.id)
     connections = OrderedDict()
     for road in junction.connecting_roads:
         for lane in road.lanes.values():

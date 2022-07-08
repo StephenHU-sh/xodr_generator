@@ -3,3 +3,4 @@ scenariogeneration
 geojson
 matplotlib
 shapely
+disjoint_set
