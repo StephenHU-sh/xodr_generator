@@ -56,7 +56,7 @@ class Junction:
     print(f"Junction [{self.id}]")
     print(f"\tConnecting Roads:")
     for road in self.connecting_roads:
-      print((f"\t\t[{road.id}]"))
+      print((f"\t\t[{road.id[6:]}]"))
 
 
 class Lane:
@@ -181,12 +181,17 @@ class Lane:
 
 
   def debug_print(self, prefix=""):
-    print(f"{prefix}Lane[{self.id}]", end="")
-    print(f"\tleft:{[lane.id for lane in self.left_neighbors]},", end="")
-    print(f"\tright:{[lane.id for lane in self.right_neighbors]},", end="")
-    print(f"\tprev:{[lane.full_id for lane in self.predecessors]},", end="")
-    print(f"\tnext:{[lane.full_id for lane in self.successors]},", end="")
-    print(f"\toverlapped:{[lane.full_id for lane in self.overlapped]},")
+    print(f"{prefix}Lane[{'%4s' % self.full_id[14:]}]\t", end="")
+    left = ['%4s' % lane.full_id[14:] for lane in self.left_neighbors]
+    print(f" left: {'%-8s' % str(left)},", end="")
+    right = ['%4s' % lane.full_id[14:] for lane in self.right_neighbors]
+    print(f" right:{'%-8s' % str(right)},", end="")
+    prev = ['%4s' % lane.full_id[14:] for lane in self.predecessors]
+    print(f" prev: {'%-16s' % str(prev)},", end="")
+    next = ['%4s' % lane.full_id[14:] for lane in self.successors]
+    print(f" next: {'%-16s' % str(next)},", end="")
+    overlap = ['%4s' % lane.full_id[14:] for lane in self.overlapped]
+    print(f" overlapped:{'%-16s' % str(overlap)}")
 
 # one-way street with only one lane section
 class Road:
@@ -299,7 +304,7 @@ class Road:
     return False
 
   def split_road_with_overlapped_lanes(self, lanes_overlapped, use_new_ref_line):
-    print(f"Road[{self.id}: {[lane.full_id for lane in lanes_overlapped]}]")
+    #print(f"Road[{self.id[6:]}: {[lane.full_id[6:] for lane in lanes_overlapped]}]")
     assert(len(lanes_overlapped) == 2)
     new_road = None
     lanes = list(self.lanes.values())
@@ -331,7 +336,7 @@ class Road:
     return new_road
 
   def __repr__(self):
-    return f"Road[{self.id}]"
+    return f"Road[{self.id[6:]}]"
 
   def debug_print(self):
     from_road = ""
@@ -340,16 +345,16 @@ class Road:
       if linkage[1] == "junction":
         from_road += f", from Junction[{linkage[0]}]"
       else:
-        from_road += f", from Road[{linkage[0].id}] {linkage[1]}"
+        from_road += f", from Road[{linkage[0].id[6:]}] {linkage[1]}"
     for linkage in self.linkage[1]:
       if linkage[1] == "junction":
         to_road += f", to Junction[{linkage[0]}]"
       else:
-        to_road += f", to Road[{linkage[0].id}] {linkage[1]}"
-    print(f"Road[{self.id}]{from_road}{to_road}")
+        to_road += f", to Road[{linkage[0].id[6:]}] {linkage[1]}"
+    print(f"Road[{'%10s' % self.id[6:]}]{from_road}{to_road}")
 
     for lane_id, lane in self.lanes.items():
-      lane.debug_print("\t")
+      lane.debug_print("\t\t")
 
 
 def update_neighbor(lane1, lane2):
@@ -585,8 +590,8 @@ class RoadNetwork:
         new_sep.terminals.add((road, "end"))
         separator_set[new_sep_id] = new_sep
 
-    for id, sep in separator_set.items():
-       print(f"{id.v}: {sep.terminals}")
+    # for id, sep in separator_set.items():
+    #    print(f"{id.v}: {sep.terminals}")
     return separator_set
 
   def select_road_direction_at_terminals(self, sep_set):
@@ -692,9 +697,9 @@ class RoadNetwork:
             break
       else:
         sep.base_pts = base_pts
-      print(f"{sep_set_id.v}: {sep.terminals}")
-      print("\t", base_pts)
-      print("==========================================")
+      # print(f"{sep_set_id.v}: {sep.terminals}")
+      # print("\t", base_pts)
+      # print("==========================================")
 
   def prepare_for_bnd_recut(self, sep_set):
     roads_to_recut_bnd = {}
@@ -845,7 +850,7 @@ class RoadNetwork:
           #if a_hash == b_hash:
           road_a.linkage[pt_a_idx].add((road_b, start_or_end_b))
           road_b.linkage[pt_b_idx].add((road_a, start_or_end_a))
-          print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+          print(f"Link: Road [{road_a.id[6:]}] and Road [{road_b.id[6:]}]")
       elif len(sep.terminals) > 2:
         terminals = list(sep.terminals)
         for road_a, start_or_end_a in terminals:
@@ -872,11 +877,11 @@ class RoadNetwork:
                   road_a.linkage[pt_a_idx].add((road_b.junction.id, "junction"))
                 else:
                   road_a.linkage[pt_a_idx].add((road_b, start_or_end_b))
-                print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+                print(f"Link: Road [{road_a.id[6:]}] and Road [{road_b.id[6:]}]")
             else:
               # incoming/outcoming roads
               road_a.linkage[pt_a_idx].add((junction_id, "junction"))
-              print(f"Link: Road [{road_a.id}] {start_or_end_a} and Junction [{junction_id}]")
+              print(f"Link: Road [{road_a.id[6:]}] {start_or_end_a} and Junction [{junction_id}]")
 
             if road_b.junction is not None:
               # connecting roads
@@ -888,11 +893,11 @@ class RoadNetwork:
                   road_b.linkage[pt_b_idx].add((road_a.junction.id, "junction"))
                 else:
                   road_b.linkage[pt_b_idx].add((road_a, start_or_end_a))
-                print(f"Link: Road [{road_a.id}] and Road [{road_b.id}]")
+                print(f"Link: Road [{road_a.id[6:]}] and Road [{road_b.id[14:]}]")
             else:
               # incoming/outcoming roads
               road_b.linkage[pt_b_idx].add((junction_id, "junction"))
-              print(f"Link: Road [{road_b.id}] {start_or_end_b} and Junction [{junction_id}]")
+              print(f"Link: Road [{road_b.id[6:]}] {start_or_end_b} and Junction [{junction_id}]")
   
   def save_direct_junction_info(self, sep_set):
     self.direct_junction_info = []
@@ -944,8 +949,6 @@ class RoadNetwork:
 
   def debug_print(self):
     for road_id, road in self.roads.items():
-      # if road_id not in ("557024172,0,0,36"):
-      #   continue
       road.debug_print()
     for junction in self.default_junctions:
       junction.debug_print()
@@ -1042,8 +1045,6 @@ def draw_lanes(my_map, ax):
 
 def draw_ref_lines(my_map):
   for road_id, road in my_map.roads.items():
-    # if road_id not in ("557024172,0,0,36", "557024172,0,0,53"):
-    #   continue
     if road.ref_line:
       pts = xxyy2xyxy(road.ref_line)
       if 0:
@@ -1057,8 +1058,7 @@ def draw_ref_lines(my_map):
         pts = list(reversed(line1)) + pts + line2
       pts = xyxy2xxyy(pts)
       plt.plot(pts[0], pts[1], "-*")
-
-    #plt.plot(road.old_ref_line[0], road.old_ref_line[1], "-x")
+      #plt.plot(road.old_ref_line[0], road.old_ref_line[1], "-x")
 
 def draw_debug_pts(my_map):
   # Draw debug points/lines
@@ -1066,21 +1066,14 @@ def draw_debug_pts(my_map):
     xyxy = xyxy2xxyy(polyline)
     plt.plot(xyxy[0], xyxy[1], "-o", markersize=10)
 
-def draw_centerlines(g, poly_filter):
+def draw_centerlines(g, focused_set):
   for f in g["features"]:
     if f["properties"]["layer"] != "center_line":
       continue
     xx = [x - Lane.base_x for x,y,z in f["geometry"]["coordinates"]]
     yy = [y - Lane.base_y for x,y,z in f["geometry"]["coordinates"]]
-    pts = [(x - Lane.base_x, y - Lane.base_y) for x,y,z in f["geometry"]["coordinates"]]
-    pts2 = [sgeom.Point(pts[len(pts)//2])]
-    inside = False
-    for poly in poly_filter:
-      k = [poly.contains(pt) for pt in pts2]
-      if np.all(k):
-        inside = True
-        continue
-    if not inside:
+    lane_id = f["properties"]["id"]
+    if len(focused_set) > 0 and lane_id not in focused_set:
       continue
     plt.plot(xx, yy, "--")
 
@@ -1112,7 +1105,7 @@ def run(geojson_file, focused_set2=set(), preview=True):
   polys, poly_filters = draw_lanes(my_map, ax)
   draw_ref_lines(my_map)
   draw_debug_pts(my_map)
-  draw_centerlines(g, poly_filters)
+  draw_centerlines(g, focused_set)
 
   # Keep aspect ratio to 1:1 in meters
   if os.name == 'nt':
