@@ -116,7 +116,7 @@ def export_road(odr, road):
             width_b.append((width_a[idx+1]-width_a[idx])/(soffset[idx+1]-soffset[idx]+0.000001))
         width_b.append(0.0)
         left_bnd_st = interp1d(right_bnd_s, right_bnd_t, fill_value="extrapolate")
-        if lane.type == "FAKE":
+        if lane.is_fake():
             lane_offset_s = soffset
             lane_offset_a = width_a
             lane_offset_b = width_b
@@ -223,17 +223,21 @@ def export_default_junction(odr, junction):
 def export(my_map):
     odr = xodr.OpenDrive("myroad")
     for road_id, road in my_map.roads.items():
-        print(road_id)
+        print(f"Exporting Road[{road_id}]...")
         export_road(odr, road)
         
     for road_id, road in my_map.roads.items():
+        print(f"Exporting Linkages of Road[{road_id}]...")
         export_road_linkage(odr, road)
 
     for sep in my_map.direct_junction_info:
+        print(f"Exporting Direct Junction[{sep}]...")
         export_direct_junction(odr, sep)
 
     for junction in my_map.default_junctions:
+        print(f"Exporting Default Junction[{junction.set_id}]...")
         export_default_junction(odr, junction)
 
+    print("Write the OpenDRIVE file...")
     odr.write_xml("test.xodr")
     print("Done")

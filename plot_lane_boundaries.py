@@ -69,9 +69,9 @@ class Junction:
 
 
 class Lane:
-  base_x = 0
-  base_y = 0
-  base_z = 0
+  base_x = 0.0
+  base_y = 0.0
+  base_z = 0.0
 
   @classmethod
   def set_base(cls, x, y, z):
@@ -115,13 +115,16 @@ class Lane:
     self.reducing = False
     self.growning = False
 
+  def is_fake(self):
+    return self.type == "FAKE"
+
   def remove_fake_lanes_in_topo(self):
-    self.left_neighbors = set([lane for lane in self.left_neighbors if lane.type != "FAKE"])
-    self.right_neighbors = set([lane for lane in self.right_neighbors if lane.type != "FAKE"])
-    self.predecessors = set([lane for lane in self.predecessors if lane.type != "FAKE"])
-    self.successors = set([lane for lane in self.successors if lane.type != "FAKE"])
-    self.overlapped = set([lane for lane in self.overlapped if lane.type != "FAKE"])
-    if self.type == "FAKE":
+    self.left_neighbors = set([lane for lane in self.left_neighbors if not lane.is_fake()])
+    self.right_neighbors = set([lane for lane in self.right_neighbors if not lane.is_fake()])
+    self.predecessors = set([lane for lane in self.predecessors if not lane.is_fake()])
+    self.successors = set([lane for lane in self.successors if not lane.is_fake()])
+    self.overlapped = set([lane for lane in self.overlapped if not lane.is_fake()])
+    if self.is_fake():
       self.clear_topo()
 
   def compute_overlapped_lanes(self):
@@ -207,7 +210,7 @@ class Lane:
   def __repr__(self):
     return f"Lane[{self.full_id[6:]}]"
 
-# one-way street with only one lane section
+# One-way street with only one lane section
 class Road:
   def __init__(self, id):
     self.id = id
@@ -283,48 +286,6 @@ class Road:
     h2 = math.atan2(self.ref_line[1][-1]-self.ref_line[1][-2], self.ref_line[0][-1]-self.ref_line[0][-2])
     self.heading = [h1, h2]
 
-  def merge_overlapped_lanes(self):
-    for lane_id, lane in self.lanes.items():
-      # Only handle at most 2 lanes got merged
-      assert(len(lane.overlapped) <= 1)
-      if len(lane.overlapped) > 0:
-        overlapped_lane = first(lane.overlapped)
-        if overlapped_lane.id + 1 == lane.id:
-          # Merge overlapped lane to left lane
-          print(f"Merge Lane[{lane.full_id}] and Lane[{overlapped_lane.full_id}]")
-          lane.right_bnd = overlapped_lane.right_bnd
-          lane.right_neighbors = overlapped_lane.right_neighbors
-          lane.predecessors = lane.predecessors.union(overlapped_lane.predecessors)
-          assert(len(overlapped_lane.right_neighbors) <= 1)
-          for lane2 in overlapped_lane.right_neighbors:
-            lane2.left_neighbors.remove(overlapped_lane)
-            lane2.left_neighbors.add(lane)
-          for lane2 in overlapped_lane.predecessors:
-            lane2.successors.remove(overlapped_lane)
-            lane2.successors.add(lane)
-          for lane2 in overlapped_lane.successors:
-            lane2.predecessors.remove(overlapped_lane)
-            lane2.predecessors.add(lane)
-          assert(len(lane.predecessors) <= 2)
-          if len(lane.predecessors) > 1:
-            for lane2 in lane.predecessors:
-              for lane3 in lane.predecessors:
-                if lane2 != lane3:
-                  lane2.overlapped.add(lane3)
-          lane.successors = lane.successors.union(overlapped_lane.successors)
-          assert(len(lane.successors) <= 2)
-          if len(lane.successors) > 1:
-            for lane2 in lane.successors:
-              for lane3 in lane.successors:
-                if lane2 != lane3:
-                  lane2.overlapped.add(lane3)
-          lane.overlapped = set()
-          lane.reducing = False
-          lane.growning = False
-          del self.lanes[overlapped_lane.id]
-          return True
-    return False
-
   def split_road_with_overlapped_lanes(self, lanes_overlapped, use_new_ref_line):
     #print(f"Road[{self.id[6:]}: {[lane.full_id[6:] for lane in lanes_overlapped]}]")
     assert(len(lanes_overlapped) == 2)
@@ -353,7 +314,7 @@ class Road:
         new_road.overlapped_roads.add(self)
         break
     for lane_id in new_road.lanes:
-      if new_road.lanes[lane_id].type != "FAKE":
+      if not new_road.lanes[lane_id].is_fake():
         del self.lanes[lane_id]
     return new_road
 
@@ -471,10 +432,10 @@ class RoadNetwork:
     for road_id, road in self.roads.items():
       lanes = list(road.lanes.values())
       for i in range(len(lanes)):
-        if lanes[i].type == "FAKE":
+        if lanes[i].is_fake():
           continue
         for j in range(i+1, len(lanes)):
-          if lanes[j].type == "FAKE":
+          if lanes[j].is_fake():
             continue
           update_neighbor(lanes[i], lanes[j])
         a_hash = pt_hash(lanes[i].left_bnd[0][0], lanes[i].left_bnd[1][0])
@@ -509,14 +470,6 @@ class RoadNetwork:
           road.predecessor_roads.add(prev.road)
         for next in lane.successors:
           road.successor_roads.add(next.road)
-
-  def merge_overlapped_lanes(self):
-    while True:
-      lanes_got_merged = False
-      for road_id, road in self.roads.items():
-        lanes_got_merged = lanes_got_merged or road.merge_overlapped_lanes()
-      if not lanes_got_merged:
-        break
 
   def split_road_with_overlapped_lanes(self):
     new_roads = []
@@ -750,70 +703,58 @@ class RoadNetwork:
       # print("==========================================")
 
   def prepare_for_bnd_recut(self, sep_set):
-    roads_to_recut_bnd = {}
+    roads_to_recut_bnd = []
     for sep_set_id, sep in sep_set.items():    
       if len(sep.base_pts) != 1:
         continue
       for road, start_or_end in sep.terminals:
-        roads_to_recut_bnd[road] = (True, True)
-    # for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
-    #   for lane_id, lane in road.lanes.items():
-    #     if len(lane.predecessors) > 1:
-    #       cut_start = False
-    #       break
-    #   for lane_id, lane in road.lanes.items():
-    #     if len(lane.successors) > 1:
-    #       cut_end = False
-    #       break
-    #   roads_to_recut_bnd[road] = (cut_start, cut_end)
+        roads_to_recut_bnd.append(road)
 
     # Extend lane boundaries
-    for road, (cut_start, cut_end) in roads_to_recut_bnd.items():
+    for road in roads_to_recut_bnd:
       for lane_id, lane in road.lanes.items():
         left_bnd = deque(xxyy2xyxy(lane.left_bnd))
         right_bnd = deque(xxyy2xyxy(lane.right_bnd))
-        if cut_start:
-          if len(lane.predecessors) != 0:
-             # With boundaries of predecessor lane
-            prev_lane = first(lane.predecessors)
-            left_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.left_bnd)))
-            right_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.right_bnd)))
+        if len(lane.predecessors) != 0:
+            # With boundaries of predecessor lane
+          prev_lane = first(lane.predecessors)
+          left_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.left_bnd)))
+          right_bnd.extendleft(reversed(xxyy2xyxy(prev_lane.right_bnd)))
+        else:
+          if len(lane.left_neighbors) and len(first(lane.left_neighbors).predecessors) > 0:
+            # With the right boundary of left neighbor's predecessor lane
+            neighbor_prev_lane = first(first(lane.left_neighbors).predecessors)
+            left_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.right_bnd)))
           else:
-            if len(lane.left_neighbors) and len(first(lane.left_neighbors).predecessors) > 0:
-              # With the right boundary of left neighbor's predecessor lane
-              neighbor_prev_lane = first(first(lane.left_neighbors).predecessors)
-              left_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.right_bnd)))
-            else:
-              # By extrapolation
-              self.extend_bnd_by_extrapolation(left_bnd, "start")
-            if len(lane.right_neighbors) and len(first(lane.right_neighbors).predecessors) > 0:
-              # with the left boundary of right neighbor's predecessor lane
-              neighbor_prev_lane = first(first(lane.right_neighbors).predecessors)
-              right_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.left_bnd)))
-            else:
-              # By extrapolation
-              self.extend_bnd_by_extrapolation(right_bnd, "start")
-        if cut_end:
-          if len(lane.successors) != 0:
-             # With boundaries of predecessor lane
-            next_lane = first(lane.successors)
-            left_bnd.extend(xxyy2xyxy(next_lane.left_bnd))
-            right_bnd.extend(xxyy2xyxy(next_lane.right_bnd))
+            # By extrapolation
+            self.extend_bnd_by_extrapolation(left_bnd, "start")
+          if len(lane.right_neighbors) and len(first(lane.right_neighbors).predecessors) > 0:
+            # with the left boundary of right neighbor's predecessor lane
+            neighbor_prev_lane = first(first(lane.right_neighbors).predecessors)
+            right_bnd.extendleft(reversed(xxyy2xyxy(neighbor_prev_lane.left_bnd)))
           else:
-            if len(lane.left_neighbors) and len(first(lane.left_neighbors).successors) > 0:
-              # With right boundary of left neighbor's successor lane
-              neighbor_next_lane = first(first(lane.left_neighbors).successors)
-              left_bnd.extend(xxyy2xyxy(neighbor_next_lane.right_bnd))
-            else:
-              # By extrapolation
-              self.extend_bnd_by_extrapolation(left_bnd, "end")
-            if len(lane.right_neighbors) and len(first(lane.right_neighbors).successors) > 0:
-              # With left boundary of right neighbor's successor lane
-              neighbor_next_lane = first(first(lane.right_neighbors).successors)
-              right_bnd.extend(xxyy2xyxy(neighbor_next_lane.left_bnd))
-            else:
-              # By extrapolation
-              self.extend_bnd_by_extrapolation(right_bnd, "end")
+            # By extrapolation
+            self.extend_bnd_by_extrapolation(right_bnd, "start")
+        if len(lane.successors) != 0:
+            # With boundaries of predecessor lane
+          next_lane = first(lane.successors)
+          left_bnd.extend(xxyy2xyxy(next_lane.left_bnd))
+          right_bnd.extend(xxyy2xyxy(next_lane.right_bnd))
+        else:
+          if len(lane.left_neighbors) and len(first(lane.left_neighbors).successors) > 0:
+            # With right boundary of left neighbor's successor lane
+            neighbor_next_lane = first(first(lane.left_neighbors).successors)
+            left_bnd.extend(xxyy2xyxy(neighbor_next_lane.right_bnd))
+          else:
+            # By extrapolation
+            self.extend_bnd_by_extrapolation(left_bnd, "end")
+          if len(lane.right_neighbors) and len(first(lane.right_neighbors).successors) > 0:
+            # With left boundary of right neighbor's successor lane
+            neighbor_next_lane = first(first(lane.right_neighbors).successors)
+            right_bnd.extend(xxyy2xyxy(neighbor_next_lane.left_bnd))
+          else:
+            # By extrapolation
+            self.extend_bnd_by_extrapolation(right_bnd, "end")
         lane.left_bnd_to_recut = left_bnd
         lane.right_bnd_to_recut = right_bnd
 
@@ -825,7 +766,7 @@ class RoadNetwork:
         for road, start_or_end in sep.terminals:
           for lane_id, lane in road.lanes.items():
             if len(self.debug_pts) != 0:
-              continue  # skip remaining lanes on any errors
+              continue  # skip remaining lanes on errors
             self.debug_pts = lane.recut_bnd(sep.base_pts[0], sep.heading, start_or_end)
             updated_lanes.add(lane)
 
@@ -858,6 +799,7 @@ class RoadNetwork:
     return sep_set
 
   def build_default_junctions(self, sep_set):
+    # From overlapped roads
     for sep_set_id, sep in sep_set.items():
       if len(sep.terminals) > 2:
         for road, start_or_end in sep.terminals:
@@ -878,6 +820,7 @@ class RoadNetwork:
             sep.junction = this_junction
 
   def connecting_road_routes(self, lane, base_route=[]):
+    # Compute all routes of connecting roads recursively
     if lane.road.junction is None:
       return [base_route]
     new_routes = []
@@ -926,14 +869,6 @@ class RoadNetwork:
     new_lane.update_poly()
     new_lane.predecessors = route[0].predecessors
     new_lane.successors = route[-1].successors
-    # for prev in route[0].predecessors:
-    #   if route[0] in prev.successors:
-    #     prev.successors.remove(route[0])
-    #   prev.successors.add(new_lane)
-    # for next in route[0].successors:
-    #   if route[-1] in next.predecessors:
-    #     next.predecessors.remove(route[-1])
-    #   next.predecessors.add(new_lane)
 
     new_road.add_lane(new_lane)
     new_road.predecessor_roads = route[0].road.predecessor_roads
@@ -967,7 +902,7 @@ class RoadNetwork:
           if not is_incoming_connecting_road:
             continue
           for lane in connecting_road.lanes.values():
-            if lane.type == "FAKE":
+            if lane.is_fake():
               continue
             routes += self.connecting_road_routes(lane)
       new_junction = Junction(self.generate_extra_junction_id())
@@ -1053,17 +988,13 @@ class RoadNetwork:
         if start_or_end_a != start_or_end_b:
           pt_a_idx = 0 if start_or_end_a == "start" else -1
           pt_b_idx = 0 if start_or_end_b == "start" else -1
-          a_hash = pt_hash(road_a.ref_line[0][pt_a_idx], road_a.ref_line[1][pt_a_idx])
-          b_hash = pt_hash(road_b.ref_line[0][pt_b_idx], road_b.ref_line[1][pt_b_idx])
-          #if a_hash == b_hash:
           road_a.linkage[pt_a_idx].add((road_b, start_or_end_b))
           road_b.linkage[pt_b_idx].add((road_a, start_or_end_a))
           print(f"Link: Road [{road_a.id[6:]}] {start_or_end_a} and Road [{road_b.id[6:]}] {start_or_end_b}")
       elif len(sep.terminals) != 1:
         # Road links between incoming/outcoming and normal roads
-        terminals = list(sep.terminals)
-        for road_a, start_or_end_a in terminals:
-          for road_b, start_or_end_b in terminals:
+        for road_a, start_or_end_a in sep.terminals:
+          for road_b, start_or_end_b in sep.terminals:
             if start_or_end_a != "end" or start_or_end_b != "start":
               continue
             pt_a_idx = 0 if start_or_end_a == "start" else -1
@@ -1076,7 +1007,6 @@ class RoadNetwork:
               # For default junctions:
               junction_id = sep.junction.id
 
-            road_a_connected_to_road_b = None
             if road_a.junction is not None:
               # connecting roads
               if road_a in road_b.predecessor_roads:
@@ -1118,7 +1048,6 @@ class RoadNetwork:
     if preview:
       return
 
-    #self.merge_overlapped_lanes()
     if self.split_road_with_overlapped_lanes():
       self.clear_topo()
       self.update_pt2lane_hash_table()
@@ -1135,12 +1064,11 @@ class RoadNetwork:
 
     # Junctions
     self.build_default_junctions(sep_set)
-    self.print_separators(sep_set)
+    #self.print_separators(sep_set)
     self.merge_junctions(sep_set)
-    print("################################")
-    self.print_separators(sep_set)
-    print("################################")
-
+    # print("################################")
+    # self.print_separators(sep_set)
+    # print("################################")
     self.save_direct_junction_info(sep_set)
 
     # Road Links
@@ -1226,7 +1154,7 @@ def draw_lanes(my_map, ax):
   color_idx = 0
   for road_id, road in my_map.roads.items():
     for lane_subid, lane in road.lanes.items():
-      if lane.type == "FAKE":
+      if lane.is_fake():
         continue
       xxyy = xyxy2xxyy(lane.poly)
 
