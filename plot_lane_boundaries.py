@@ -620,7 +620,6 @@ class RoadNetwork:
         # Find shared start/end points among roads
         base_pts += self.find_common_lane_bnd_pt(sep.terminals, "start")
         base_pts += self.find_common_lane_bnd_pt(sep.terminals, "end")
-
       assert(len(base_pts) > 0 or len(sep.terminals) == 2)
       if len(base_pts) == 0:
         # Connected without lane merging/splitting
@@ -1192,7 +1191,7 @@ def register_event_handlers(ax, preview):
     plt.connect('draw_event', update_selected_region)
   plt.connect('key_press_event', toggle_selector)
 
-def run(geojson_file, focused_set2=set(), preview=True):
+def run(geojson_file, focused_set2=set(), preview=True, export=False, georef=""):
   global fig, polys, focused_set, my_map, xodr_filename
   focused_set = focused_set2
   fig, ax = plt.subplots()
@@ -1218,9 +1217,33 @@ def run(geojson_file, focused_set2=set(), preview=True):
 
   focused_set = set()
   xodr_filename = geojson_file.replace(".json", ".xodr")
-  plt.show()
+  if export:
+    xodr_exporter.export(xodr_filename, my_map, Lane.base_x, Lane.base_y, "navinfo", georef)
+  else:
+    plt.show()
   return focused_set
 
+geojson_files = [
+  ("0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
+  ("ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354, 0"),
+  ("94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
+  ("e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
+
+  #("d6661a91-73af-43fc-bb6b-72bb6b1a2217.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.2231055554, 28.8839460443705, 0"),
+  #("3db742cb-855d-4c4f-9f1f-1b6ff3621050.json", "3 | 0 | IGS& 4 | 1 | ENU, 118.727868469432, 34.9886784050614, 0"),
+  # 806010035, 806000036, 806000037
+  ("75067911-549b-4604-8021-3ebc965cd57b.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
+  ("dfdafe92-be1a-41c7-a281-ad92d5a94085.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.257908642292, 31.1970074102283, 0"),
+  ("099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"),
+  ("94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
+  ("8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"),
+  #("e4b90479-6c46-4674-9870-224beacd90e0.json", "3 | 0 | IGS& 4 | 1 | ENU, 114.40930718556, 30.8577782101929, 0"),
+  # 556940257,0,0,27, 556940257,0,0,43, 556940257,0,0,10027
+  ]
+for idx, (geojson_file, georef) in enumerate(geojson_files):
+  print(idx, geojson_file)
+  run(geojson_file, {}, preview=False, export=True, georef=georef)
+exit()
 
 if __name__ == '__main__':
   georef = "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"
@@ -1247,5 +1270,5 @@ if __name__ == '__main__':
 
   if focused_set:
     print(focused_set)
-    ret = run(geojson_file, focused_set, preview=False)
+    ret = run(geojson_file, focused_set, preview=False, georef=georef)
     print(ret)
