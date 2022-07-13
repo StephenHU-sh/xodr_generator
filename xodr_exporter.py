@@ -235,7 +235,7 @@ def export(xodr_filename, my_map, offset_x, offset_y, map_ver, georef):
         export_road_linkage(odr, road)
 
     for sep in my_map.direct_junction_info:
-        print(f"Exporting Direct Junction[{sep}]...")
+        print(f"Exporting Direct Junction[{sep.road_short_id}]...")
         export_direct_junction(odr, sep)
 
     for junction in my_map.default_junctions:

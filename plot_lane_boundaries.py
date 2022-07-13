@@ -46,7 +46,7 @@ class Separator:
     self.junction = None
 
   def __repr__(self):
-    return f"Separator[{self.id}]"
+    return f"Separator[{self.road_short_id if self.junction is None else self.junction.set_id}]"
 
 
 class Junction:
@@ -1045,7 +1045,7 @@ class RoadNetwork:
       road.backup_ref_line()
       road.build_ref_line()
       road.resample_ref_line(3.0)
-      road.resample_ref_line(0.01, "cubic")
+      road.resample_ref_line(0.1, "cubic")
 
   def debug_print(self):
     for road_id, road in self.roads.items():
@@ -1216,7 +1216,7 @@ def run(geojson_file, focused_set2=set(), preview=True, export=False, georef="")
   register_event_handlers(ax, preview)
 
   focused_set = set()
-  xodr_filename = geojson_file.replace(".json", ".xodr")
+  xodr_filename = geojson_file.replace(".json", "_low.xodr")
   if export:
     xodr_exporter.export(xodr_filename, my_map, Lane.base_x, Lane.base_y, "navinfo", georef)
   else:
@@ -1224,19 +1224,20 @@ def run(geojson_file, focused_set2=set(), preview=True, export=False, georef="")
   return focused_set
 
 geojson_files = [
-  ("0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
-  ("ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354, 0"),
-  ("94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
-  ("e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
+  # ("0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
+  # ("ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354, 0"),
+  # ("94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
+  # ("e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
 
   #("d6661a91-73af-43fc-bb6b-72bb6b1a2217.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.2231055554, 28.8839460443705, 0"),
   #("3db742cb-855d-4c4f-9f1f-1b6ff3621050.json", "3 | 0 | IGS& 4 | 1 | ENU, 118.727868469432, 34.9886784050614, 0"),
   # 806010035, 806000036, 806000037
-  ("75067911-549b-4604-8021-3ebc965cd57b.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
-  ("dfdafe92-be1a-41c7-a281-ad92d5a94085.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.257908642292, 31.1970074102283, 0"),
-  ("099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"),
-  ("94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935, 31.1956300958991, 0"),
-  ("8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"),
+  ##("75067911-549b-4604-8021-3ebc965cd57b.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903, 34.8047443293035, 0"),
+  ##("dfdafe92-be1a-41c7-a281-ad92d5a94085.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.257908642292, 31.1970074102283, 0"),
+  #("099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"),
+  #
+  #("8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"),
+  # 
   #("e4b90479-6c46-4674-9870-224beacd90e0.json", "3 | 0 | IGS& 4 | 1 | ENU, 114.40930718556, 30.8577782101929, 0"),
   # 556940257,0,0,27, 556940257,0,0,43, 556940257,0,0,10027
   ]
