@@ -3,6 +3,11 @@ import matplotlib.pyplot as plt
 
 class WorldBox:
     x_min, x_max, y_min, y_max = 1e30, -1e30, 1e30, -1e30
+
+    @classmethod
+    def clear(cls):
+      cls.x_min, cls.x_max, cls.y_min, cls.y_max = 1e30, -1e30, 1e30, -1e30
+
     @classmethod
     def update(cls, xx, yy):
         cls.x_min = min(cls.x_min, min(xx))
@@ -46,15 +51,15 @@ def dist2(p1, p2):
 def is_almost_the_same_pt(p1, p2):
   return dist2(p1, p2) < 0.05 * 0.05
 
-def curvature(x, y):
-  triangle_area = abs((x[1]-x[0])*(y[2]-y[0]) - (y[1]-y[0])*(x[2]-x[0]))
-  a = dist2((x[0], y[0]), (x[1], y[1]))
-  b = dist2((x[2], y[2]), (x[1], y[1]))
-  c = dist2((x[0], y[0]), (x[2], y[2]))
+def curvature(pts):
+  triangle_area = abs((pts[1][0]-pts[0][0])*(pts[2][1]-pts[0][1]) - (pts[1][1]-pts[0][1])*(pts[2][0]-pts[0][0]))
+  a = dist2(pts[0], pts[1])
+  b = dist2(pts[2], pts[1])
+  c = dist2(pts[0], pts[2])
   return 4 * triangle_area / math.sqrt(a * b * c)
 
-def pt_hash(x, y):
-  return "%.1f,%.1f" % (x, y)
+def pt_hash(pt):
+  return "%.1f,%.1f" % (pt[0], pt[1])
 
 def is_almost_the_same_pt2(p1, p2):
   return pt_hash(*p1) == pt_hash(*p2)
@@ -64,7 +69,6 @@ def xxyy2xyxy(xxyy):
 
 def xyxy2xxyy(xy):
   return ([x for x, y in xy], [y for x, y in xy])
-
 
 def clip_xyxy(xyxy, length):
   if not isinstance(xyxy, list):
@@ -80,3 +84,4 @@ def clip_xyxy(xyxy, length):
     if d >= length:
       break
   return xyxy2
+  

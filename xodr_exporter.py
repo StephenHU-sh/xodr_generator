@@ -6,7 +6,7 @@ import os
 import math
 from scipy.interpolate import interp1d, CubicSpline
 from scipy import stats, mean
-from geom_utils import xxyy2xyxy, xyxy2xxyy
+from geom_utils import xyxy2xxyy
 
 
 def resample_linear(pts, d=1.0):
@@ -35,29 +35,29 @@ def resample_cubic(pts, a, b, d):
         new_pts.append((x, y))
     return new_pts
 
-def pts_dir(pts):
-    pts_x, pts_y = xyxy2xxyy(pts)
-    min_pts_x = min(pts_x)
-    min_pts_y = min(pts_y)
-    max_pts_x = max(pts_x)
-    max_pts_y = max(pts_y)
-    if max_pts_y - min_pts_y < max_pts_x - min_pts_x:
-        result = stats.linregress(pts_x, pts_y)
-        theta = math.atan(result.slope)
-        print("\t heading: %.1f degree" % (theta/math.pi*180))
-        theta -= math.pi/2
-        return math.cos(theta), math.sin(theta)
-    else:
-        result = stats.linregress(pts_y, pts_x)
-        theta = math.atan(result.slope)
-        print("\t heading: %.1f degree" % (theta/math.pi*180))
-        theta -= math.pi/2
-        return math.cos(theta), math.sin(theta)
+# def pts_dir(pts):
+#     pts_x, pts_y = xyxy2xxyy(pts)
+#     min_pts_x = min(pts_x)
+#     min_pts_y = min(pts_y)
+#     max_pts_x = max(pts_x)
+#     max_pts_y = max(pts_y)
+#     if max_pts_y - min_pts_y < max_pts_x - min_pts_x:
+#         result = stats.linregress(pts_x, pts_y)
+#         theta = math.atan(result.slope)
+#         print("\t heading: %.1f degree" % (theta/math.pi*180))
+#         theta -= math.pi/2
+#         return math.cos(theta), math.sin(theta)
+#     else:
+#         result = stats.linregress(pts_y, pts_x)
+#         theta = math.atan(result.slope)
+#         print("\t heading: %.1f degree" % (theta/math.pi*180))
+#         theta -= math.pi/2
+#         return math.cos(theta), math.sin(theta)
 
 def export_road(odr, road):
     planview = xodr.PlanView()
     s = 0.0
-    pts = xxyy2xyxy(road.ref_line)
+    pts = road.ref_line
 
     ref = LineString(pts)
     for idx in range(len(pts)-1):
@@ -78,20 +78,7 @@ def export_road(odr, road):
         width_a = []
         width_b = []
         soffset = []
-        right_bnd_pts = xxyy2xyxy(lane.right_bnd)
-        # if lane.full_id == "557024172,0,0,36,0":
-        #     new_right_bnd_pts = resample_linear(right_bnd_pts, 0.1)
-        #     print(f"[{lane.full_id}] end   ","    right_bnd_pts: %.10f %.10f" % (right_bnd_pts[-1][0], right_bnd_pts[-1][1]))
-        #     print(f"[{lane.full_id}] end   ","new_right_bnd_pts: %.10f %.10f" % (new_right_bnd_pts[-1][0], new_right_bnd_pts[-1][1]))
-        # if lane.full_id == "557024172,0,0,37,0":
-        #     new_right_bnd_pts = resample_linear(right_bnd_pts, 0.1)
-        #     print(f"[{lane.full_id}] start ","    right_bnd_pts: %.10f %.10f" % (right_bnd_pts[0][0], right_bnd_pts[0][1]))
-        #     print(f"[{lane.full_id}] start ","new_right_bnd_pts: %.10f %.10f" % (new_right_bnd_pts[0][0], new_right_bnd_pts[0][1]))
-
-        ## TODO: Resampling introduces more accumulated errors on lanes of curved roads.
-        #right_bnd_pts = resample_linear(right_bnd_pts, 0.1)
-        
-        #print(lane_subid, right_bnd.length)
+        right_bnd_pts = lane.right_bnd
         right_bnd_s = []
         right_bnd_t = []
         old_pt2 = None
@@ -161,7 +148,7 @@ def export_road_linkage(odr, road_a):
                 else:
                     road_a.xodr.add_successor(xodr.ElementType.junction, junction_id)
 
-    for lane_id, lane in road_a.lanes.items():
+    for lane in road_a.lanes.values():
         for predecessor in lane.predecessors:
             for linkage in road_a.linkage[0]:
                 from_junction = linkage is not None and linkage[1] == "junction"
