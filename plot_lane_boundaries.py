@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('TkAgg')
 
+import sys
 import os
 import math
 from collections import deque
@@ -500,9 +501,13 @@ class RoadNetwork:
       road_id = lane_id[:pos]
       lane_subid = int(lane_id[pos+1:])
 
-      if road_id not in self.roads:
-        self.add_road(Road(road_id))
-      self.roads[road_id].add_lane(Lane(lane_id, lane_subid, lane_type, f["geometry"]["coordinates"]))
+      new_lane = Lane(lane_id, lane_subid, lane_type, f["geometry"]["coordinates"])
+      if len(new_lane.left_bnd) != 0 and len(new_lane.right_bnd) != 0:
+        if road_id not in self.roads:
+          self.add_road(Road(road_id))
+        self.roads[road_id].add_lane(new_lane)
+      else:
+        print(f"SKIP problematic lane[{lane_id}].")
 
   def generate_extra_road_id(self):
     self.extra_road_max_id += 1
@@ -510,7 +515,8 @@ class RoadNetwork:
 
   def generate_extra_junction_id(self):
     self.extra_junction_max_id += 1
-    return f"888888888,8,8,{self.extra_junction_max_id}"
+    return f"{8888 + self.extra_junction_max_id}"
+    #return f"888888888,8,8,{self.extra_junction_max_id}"
 
   def add_road(self, road):
     self.roads[road.id] = road
@@ -1444,19 +1450,29 @@ def run(geojson_file, focused_set2=set(), preview=True, export=False, georef="")
     plt.show()
   return focused_set
 
+if 1:
+  if __name__ == '__main__':
+    if len(sys.argv) < 2:
+      print("Usage: python plot_lane_boundaries.py input.json")
+      exit(0)
+    georef = "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354,  0"
+    ret = run(sys.argv[1], {}, preview=False, export=True, georef=georef)
+    print(ret)
+    exit(0)
+
 geojson_files = [
-  ("A", "0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"),
-  ("B", "94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"), # split ref line not smoothed
+  # ("A", "0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"),
+  # ("B", "94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"), # split ref line not smoothed
   ("C", "ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354,  0"), # Fixed. overlap related. topo: 557392309,0,0,43,1 => 557392309,0,0,14,2
-  ("D", "e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903,  34.8047443293035, 0"), # Fixed. topo 557392309,0,0,43,1 => 557392309,0,0,14,2
+  # ("D", "e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903,  34.8047443293035, 0"), # Fixed. topo 557392309,0,0,43,1 => 557392309,0,0,14,2
   
-  ("E", "d6661a91-73af-43fc-bb6b-72bb6b1a2217.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.2231055554,   28.8839460443705, 0"), # Fixed. 4 overlapped lanes in one road. 557004510,0,0,3,4-1, assert(len(lanes_overlapped) == 2)
-  ("F", "3db742cb-855d-4c4f-9f1f-1b6ff3621050.json", "3 | 0 | IGS& 4 | 1 | ENU, 118.727868469432, 34.9886784050614, 0"), # Fixed. connecting road with 2 next roads: 806010035 => {806000036, 806000037}
-  ("G", "75067911-549b-4604-8021-3ebc965cd57b.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903,  34.8047443293035, 0"), # Fixed. regression: successor: 557371806,0,0,10035,  806000036,   806000037
-  ("H", "dfdafe92-be1a-41c7-a281-ad92d5a94085.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.257908642292, 31.1970074102283, 0"), # Fixed. regression: successor: 557371806,0,0,10035,  806000036,   806000037
-  ("I", "099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"), # Fixed. lane shape # ref line cut
-  ("J", "8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"), # Fixed. lane shape # ref line cut
-  ("K", "e4b90479-6c46-4674-9870-224beacd90e0.json", "3 | 0 | IGS& 4 | 1 | ENU, 114.40930718556,  30.8577782101929, 0"), # Fixed. irregular overlapped lanes # ref line cut # 556940257,0,0,27, 556940257,0,0,43, 556940257,0,0,10027 assert(len(base_pts) > 0 or len(sep.terminals) == 2)
+  # ("E", "d6661a91-73af-43fc-bb6b-72bb6b1a2217.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.2231055554,   28.8839460443705, 0"), # Fixed. 4 overlapped lanes in one road. 557004510,0,0,3,4-1, assert(len(lanes_overlapped) == 2)
+  # ("F", "3db742cb-855d-4c4f-9f1f-1b6ff3621050.json", "3 | 0 | IGS& 4 | 1 | ENU, 118.727868469432, 34.9886784050614, 0"), # Fixed. connecting road with 2 next roads: 806010035 => {806000036, 806000037}
+  # ("G", "75067911-549b-4604-8021-3ebc965cd57b.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903,  34.8047443293035, 0"), # Fixed. regression: successor: 557371806,0,0,10035,  806000036,   806000037
+  # ("H", "dfdafe92-be1a-41c7-a281-ad92d5a94085.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.257908642292, 31.1970074102283, 0"), # Fixed. regression: successor: 557371806,0,0,10035,  806000036,   806000037
+  # ("I", "099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"), # Fixed. lane shape # ref line cut
+  # ("J", "8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"), # Fixed. lane shape # ref line cut
+  # ("K", "e4b90479-6c46-4674-9870-224beacd90e0.json", "3 | 0 | IGS& 4 | 1 | ENU, 114.40930718556,  30.8577782101929, 0"), # Fixed. irregular overlapped lanes # ref line cut # 556940257,0,0,27, 556940257,0,0,43, 556940257,0,0,10027 assert(len(base_pts) > 0 or len(sep.terminals) == 2)
   ]
 focused_set = {}
 
