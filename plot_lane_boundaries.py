@@ -1362,8 +1362,8 @@ def draw_lanes(my_map, ax):
     
     c = matplotlib.colors.to_rgb(cycle[color_idx])
     color_idx = (color_idx + 1) % len(cycle)
-    p.my_color = (c[0], c[1], c[2], 0.3)
-    p.my_color2 = (c[0], c[1], c[2], 0.6)
+    p.my_color = (c[0], c[1], c[2], 0.95)
+    p.my_color2 = (c[0], c[1], c[2], 0.8)
 
     polys2.append(sgeom.Polygon(lane.poly)) # for filting centerlines
     WorldBox.update(*xxyy)
@@ -1453,17 +1453,23 @@ def run(geojson_file, focused_set2=set(), preview=True, export=False, georef="")
 if 1:
   if __name__ == '__main__':
     if len(sys.argv) < 2:
-      print("Usage: python plot_lane_boundaries.py input.json")
+      print("Usage: python plot_lane_boundaries.py input.json [--preview]")
       exit(0)
+    geojson_path = sys.argv[1]
     georef = "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354,  0"
-    ret = run(sys.argv[1], {}, preview=False, export=True, georef=georef)
-    print(ret)
+    if len(sys.argv) > 2 and sys.argv[2] == "--preview":
+      focused_set = run(geojson_path, {}, preview=True)
+      if focused_set:
+        ret = run(geojson_path, focused_set, preview=False, export=True, georef=georef)
+    else:
+      ret = run(geojson_path, {}, preview=False, export=True, georef=georef)
+      print(ret)
     exit(0)
 
 geojson_files = [
   # ("A", "0eca7058-c239-41f3-9f06-8a1243fa2063.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"),
   # ("B", "94eeaa34-796c-46d2-89bd-4099f7e70cfc.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.25589706935,  31.1956300958991, 0"), # split ref line not smoothed
-  ("C", "ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354,  0"), # Fixed. overlap related. topo: 557392309,0,0,43,1 => 557392309,0,0,14,2
+  # ("C", "ee2dcc13-a190-48b3-b93f-fc54e2dd9c65.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.285684663802, 36.722913114354,  0"), # Fixed. overlap related. topo: 557392309,0,0,43,1 => 557392309,0,0,14,2
   # ("D", "e2b2f2dc-2436-4870-bb8b-ad5db9db1319.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.01238177903,  34.8047443293035, 0"), # Fixed. topo 557392309,0,0,43,1 => 557392309,0,0,14,2
   
   # ("E", "d6661a91-73af-43fc-bb6b-72bb6b1a2217.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.2231055554,   28.8839460443705, 0"), # Fixed. 4 overlapped lanes in one road. 557004510,0,0,3,4-1, assert(len(lanes_overlapped) == 2)
@@ -1473,6 +1479,16 @@ geojson_files = [
   # ("I", "099f151a-d366-4afd-b6ce-b45f6c8b088d.json", "3 | 0 | IGS& 4 | 1 | ENU, 121.254792921245, 31.1981098819524, 0"), # Fixed. lane shape # ref line cut
   # ("J", "8ae44542-62df-4e77-913c-f6ed40c8642a.json", "3 | 0 | IGS& 4 | 1 | ENU, 117.746589006856, 31.7915460281074, 0"), # Fixed. lane shape # ref line cut
   # ("K", "e4b90479-6c46-4674-9870-224beacd90e0.json", "3 | 0 | IGS& 4 | 1 | ENU, 114.40930718556,  30.8577782101929, 0"), # Fixed. irregular overlapped lanes # ref line cut # 556940257,0,0,27, 556940257,0,0,43, 556940257,0,0,10027 assert(len(base_pts) > 0 or len(sep.terminals) == 2)
+  
+  
+#  ("L", "e50db561-c209-4172-bef9-83469a8b215a.json", "3 | 0 | IGS& 4 | 1 | ENU, 120.018651299179, 30.5425742268562, 0"), # overlapped lane
+#  ("L", "f853c656-301d-4c45-891f-da87c6e1a52c.json", "3 | 0 | IGS& 4 | 1 | ENU, 120.053409794345, 30.5497380718589, 0"), # cut line
+#  ("L", "35cc301a-e17b-4ef2-8e6a-a11bfe86ddde.json", "3 | 0 | IGS& 4 | 1 | ENU, 119.777727825567, 30.7557820994407, 0"), # lane boundary with only 2 pts.
+ ("L", "da13bf90-d782-42e3-bf22-42f9546ec0ac.json", "3 | 0 | IGS& 4 | 1 | ENU, 118.718698415905, 32.6414504740387, 0"),
+
+
+
+
   ]
 focused_set = {}
 
@@ -1494,6 +1510,10 @@ focused_set = {}
 #focused_set = {'557371806,0,0,37,1', '557371806,0,0,44,1', '557371806,0,0,38,1', '557371806,0,0,36,1', '557371806,0,0,34,1', '557371806,0,0,34,2', '557371806,0,0,35,1', '557371806,0,0,44,2', '557371806,0,0,36,0', '557371806,0,0,35,2', '557371806,0,0,35,3'}
 # case K, irregular overlapped lanes
 #focused_set = {'556940257,0,0,92,2', '556940257,0,0,27,1', '556940257,0,0,91,1', '556940257,0,0,54,1', '556940257,0,0,44,1', '556940257,0,0,91,2', '556940257,0,0,54,2', '556940257,0,0,92,3', '556940257,0,0,52,0', '556940257,0,0,43,1', '556940257,0,0,92,1', '556940257,0,0,43,2', '556940257,0,0,52,1', '556940257,0,0,44,2', '556940257,0,0,27,2', '556940257,0,0,66,1', '556940257,0,0,91,3'}
+
+
+# case L, overlap lanes
+#focused_set = {'557005247,0,0,13,1', '557005247,0,0,49,2', '557005247,0,0,50,1', '557005247,0,0,50,2', '557005247,0,0,50,3', '557005247,0,0,13,0', '557005247,0,0,7,1', '557005247,0,0,49,1'}
 
 #focused_set = {'557371806,0,0,37,1', '557371806,0,0,35,3', '557371806,0,0,44,2', '557371806,0,0,44,1', '557371806,0,0,38,1', '557371806,0,0,35,1', '557371806,0,0,36,1', '557371806,0,0,34,1', '557371806,0,0,35,2', '557371806,0,0,36,0', '557371806,0,0,34,2'}
 
